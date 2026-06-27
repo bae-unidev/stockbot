@@ -1,0 +1,28 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# 시크릿 — 절대 커밋 금지
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+logs/
+
+# OS
+.DS_Store
+
+# drizzle 생성물은 추적하되, 임시 산출물은 무시
+**/.turbo/
+
+# python (오프라인 백필 스크립트용)
+__pycache__/
+*.pyc
+.venv/
+venv/

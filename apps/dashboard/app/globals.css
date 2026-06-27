@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-bg text-ink antialiased;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+  a {
+    @apply text-accent no-underline hover:underline;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-panel border border-panel-border rounded-[10px] px-4 py-[14px];
+  }
+  .panel h2 {
+    @apply text-[13px] uppercase tracking-[0.05em] text-muted mb-[10px] mt-0 font-medium;
+  }
+  table {
+    @apply w-full border-collapse;
+  }
+  th,
+  td {
+    @apply text-left px-2 py-[6px] border-b border-panel-border tabular-nums;
+  }
+  th {
+    @apply text-muted font-medium text-[12px];
+  }
+  .pill {
+    @apply inline-block px-2 py-[2px] rounded-full text-[12px] border border-panel-border;
+  }
+  .pill.ok {
+    @apply text-up border-[#1f5141];
+  }
+  .pill.bad {
+    @apply text-down border-[#5a2a2a];
+  }
+  .metric {
+    @apply flex justify-between py-1;
+  }
+  .empty {
+    @apply text-muted p-2;
+  }
+  .container {
+    @apply max-w-[1100px] mx-auto px-5 pt-6 pb-[60px];
+  }
+  .grid-cards {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  }
+  .right {
+    @apply text-right;
+  }
+  .green {
+    @apply text-up;
+  }
+  .red {
+    @apply text-down;
+  }
+  .muted {
+    @apply text-muted;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1 px-3 py-[7px] rounded-md text-[13px] font-medium border border-panel-border bg-panel text-ink cursor-pointer transition-colors;
+    @apply hover:border-muted disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-danger {
+    @apply border-[#5a2a2a] text-down hover:bg-[#2a1414] hover:border-down;
+  }
+  .btn-ok {
+    @apply border-[#1f5141] text-up hover:bg-[#11231c] hover:border-up;
+  }
+  .kpi {
+    @apply bg-panel border border-panel-border rounded-[10px] px-4 py-3 flex flex-col gap-1;
+  }
+  .kpi .label {
+    @apply text-[11px] uppercase tracking-[0.05em] text-muted;
+  }
+  .kpi .value {
+    @apply text-[18px] font-semibold tabular-nums;
+  }
+  .kpi-strip {
+    @apply grid gap-3 mb-4;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "name": "@stockbot/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "collect": "tsx src/cli/collect.ts",
+    "backtest": "tsx src/cli/backtest.ts",
+    "paramsweep": "tsx src/cli/paramsweep.ts",
+    "watchlist": "tsx src/cli/watchlist.ts",
+    "symbols": "tsx src/cli/symbols.ts",
+    "tick": "tsx src/cli/tick.ts",
+    "control": "tsx src/cli/control.ts",
+    "replay": "tsx src/cli/replay.ts",
+    "preflight": "tsx src/cli/preflight.ts",
+    "reset": "tsx src/cli/reset.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "@stockbot/core": "workspace:*",
+    "bottleneck": "^2.19.5",
+    "drizzle-orm": "^0.36.0",
+    "ioredis": "^5.4.0",
+    "luxon": "^3.5.0",
+    "node-cron": "^3.0.3",
+    "pino": "^9.5.0",
+    "postgres": "^3.4.0",
+    "yahoo-finance2": "^2.13.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.4.0",
+    "@types/node": "^20.14.0",
+    "@types/node-cron": "^3.0.0",
+    "drizzle-kit": "^0.28.0",
+    "pino-pretty": "^11.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0"
+  }
+}

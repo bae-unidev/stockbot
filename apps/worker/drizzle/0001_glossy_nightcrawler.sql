@@ -1,0 +1,1 @@
+ALTER TABLE "positions" ADD COLUMN "scaled_out" boolean DEFAULT false NOT NULL;

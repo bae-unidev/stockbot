@@ -1,0 +1,45 @@
+{
+  "name": "stockbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter @stockbot/worker dev",
+    "collect": "pnpm --filter @stockbot/worker collect",
+    "backtest": "pnpm --filter @stockbot/worker backtest",
+    "paramsweep": "pnpm --filter @stockbot/worker paramsweep",
+    "preflight": "pnpm --filter @stockbot/worker preflight",
+    "tick": "pnpm --filter @stockbot/worker tick",
+    "control": "pnpm --filter @stockbot/worker control",
+    "replay": "pnpm --filter @stockbot/worker replay",
+    "watchlist": "pnpm --filter @stockbot/worker watchlist",
+    "symbols": "pnpm --filter @stockbot/worker symbols",
+    "reset": "pnpm --filter @stockbot/worker reset",
+    "dashboard": "pnpm --filter @stockbot/dashboard dev",
+    "db:generate": "pnpm --filter @stockbot/worker db:generate",
+    "db:migrate": "pnpm --filter @stockbot/worker db:migrate",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "app:up": "docker compose --profile app up -d --build",
+    "app:down": "docker compose --profile app down",
+    "app:logs": "docker compose --profile app logs -f worker"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0"
+  }
+}

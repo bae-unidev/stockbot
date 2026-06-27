@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "fills_broker_fill_idx" ON "fills" USING btree ("broker_fill_id");

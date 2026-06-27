@@ -1,0 +1,12 @@
+# 대시보드(Next.js) 컨테이너. 빌드 컨텍스트 = 저장소 루트(@stockbot/core transpile 필요).
+FROM node:20-slim
+
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /app
+
+COPY . .
+RUN pnpm install --frozen-lockfile --filter @stockbot/dashboard...
+RUN pnpm --filter @stockbot/dashboard build
+
+EXPOSE 3000
+CMD ["pnpm", "--filter", "@stockbot/dashboard", "start"]

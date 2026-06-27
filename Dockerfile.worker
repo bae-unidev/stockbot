@@ -1,0 +1,12 @@
+# 워커(매매 엔진) 컨테이너 — 순수 Node + TS, tsx 런타임. 스케줄러(node-cron) 상시 가동용.
+# 빌드 컨텍스트 = 저장소 루트(모노레포: core + worker 필요). node_modules/.env 는 .dockerignore 제외.
+FROM node:20-slim
+
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /app
+
+COPY . .
+RUN pnpm install --frozen-lockfile --filter @stockbot/worker...
+
+# 부팅 시 마이그레이션 적용 후 스케줄러 기동(장중 hourly 틱 + 매분 스탑가드).
+CMD ["sh", "-c", "pnpm --filter @stockbot/worker db:migrate && pnpm --filter @stockbot/worker start"]

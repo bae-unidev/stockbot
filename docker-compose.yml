@@ -1,0 +1,74 @@
+# 로컬 인프라: Postgres(원장·시세·이벤트·점수·백테스트) + Redis(토큰 캐시 + 틱 락)
+# 운영/배포(Railway)는 14장 마지막 단계. 여기서는 로컬 개발 전용.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stockbot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stockbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockbot}
+      POSTGRES_DB: ${POSTGRES_DB:-stockbot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockbot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: stockbot-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── 앱 서비스(opt-in): `docker compose --profile app up -d --build` 로만 기동 ──
+  #    기본 `docker compose up -d`(=pnpm infra:up)는 인프라만 띄워 실수로 매매가 시작되지 않게 함.
+  worker:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: stockbot-worker
+    restart: unless-stopped # 스케줄러(node-cron) 상시 가동 — 죽으면 자동 재시작
+    env_file: .env
+    environment:
+      RUN_MODE: live
+      KIS_ENV: paper
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockbot}:${POSTGRES_PASSWORD:-stockbot}@postgres:5432/${POSTGRES_DB:-stockbot}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dashboard:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: stockbot-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockbot}:${POSTGRES_PASSWORD:-stockbot}@postgres:5432/${POSTGRES_DB:-stockbot}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
