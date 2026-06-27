@@ -17,8 +17,13 @@ async function main() {
     process.exit(1);
   }
   if (!c.orderManager || !c.kis) {
-    logger.error('KIS 모의투자 자격증명이 없습니다(.env 의 MOCK_KIS_* 확인). live 틱 불가.');
+    logger.error('KIS 자격증명이 없습니다(.env 확인: paper=MOCK_KIS_*, prod=KIS_API_*+KIS_ACCOUNT). live 틱 불가.');
     process.exit(1);
+  }
+  // 실거래면 기동 시 크게 경고 + 알림(되돌리기 어려운 실주문).
+  if (c.config.kis?.env === 'prod') {
+    logger.warn('⚠️ 실거래(REAL MONEY) 모드로 기동합니다 — 실제 자금으로 주문이 나갑니다. 리스크 한도/킬스위치 확인.');
+    await c.notifier.notify('critical', '⚠️ stockbot 실거래 모드 기동', { account: c.config.kis.account.slice(0, 4) + '****' });
   }
 
   const tickDeps: TickDeps = {
