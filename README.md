@@ -319,3 +319,15 @@ pnpm dashboard                     # http://localhost:3000
 `ANTHROPIC_API_KEY`·`LLM_MODEL`·`EVENT_PROMPT_VERSION`(이벤트 점수화), `DART_API_KEY`(공시 수집),
 `WATCHLIST_SYMBOLS`(기본 유니버스), `INDEX_SYMBOL`(200일선 국면), `NOTIFIER_WEBHOOK_URL`,
 `MAX_POSITIONS`·`PER_SYMBOL_WEIGHT_CAP`·`DAILY_LOSS_LIMIT_PCT`.
+
+
+Open API Key 관리
+API Key
+tsck_live_weeXmMX5J0hrm24Pza1LiO
+Secret Key
+tssk_live_fVUtwZTX61pvEcxfVmyetEKHUomwOLXij5A0UT8JL8RA
+Secret Key는 지금만 복사할 수 있어요. 안전한 곳에 보관해주세요.
+발급일
+2026.06.30 22:46
+만료일
+2027.06.30 22:46

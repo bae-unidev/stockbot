@@ -20,7 +20,7 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
 
   ANTHROPIC_API_KEY: z.string().optional(),
-  LLM_MODEL: z.string().default('claude-haiku-4-5-20251001'),
+  LLM_MODEL: z.string().default('claude-opus-4-8'), // 뉴스/섹터 추론 품질 우선(temperature 미지원 → 호출부에서 생략)
   EVENT_PROMPT_VERSION: z.string().default('v1'),
   DART_API_KEY: z.string().optional(),
 

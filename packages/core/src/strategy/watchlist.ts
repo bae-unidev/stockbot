@@ -15,6 +15,7 @@ export interface FactorInput {
   per: number | null; // 밸류 (낮을수록 좋음)
   roe: number | null; // 퀄리티 (높을수록 좋음)
   eventScore: number | null; // event_score (point-in-time, 8장)
+  sectorScore: number | null; // 그날 뉴스 기반 섹터 강세도 (8장 확장)
 }
 
 export interface RankedSymbol {
@@ -25,6 +26,7 @@ export interface RankedSymbol {
     value: number;
     quality: number;
     event: number;
+    sector: number;
   };
 }
 
@@ -63,6 +65,7 @@ export function buildWatchlist(inputs: FactorInput[], config: StrategyConfig): R
   }
   const quality = normalize(liquid, (f) => f.roe);
   const event = normalize(liquid, (f) => f.eventScore);
+  const sector = normalize(liquid, (f) => f.sectorScore);
 
   // 3) 가중 합산
   const w = config.factorWeights;
@@ -72,12 +75,14 @@ export function buildWatchlist(inputs: FactorInput[], config: StrategyConfig): R
       value: value.get(f.symbol) ?? 0,
       quality: quality.get(f.symbol) ?? 0,
       event: event.get(f.symbol) ?? 0,
+      sector: sector.get(f.symbol) ?? 0,
     };
     const score =
       components.momentum * w.momentum +
       components.value * w.value +
       components.quality * w.quality +
-      components.event * w.event;
+      components.event * w.event +
+      components.sector * w.sector;
     return { symbol: f.symbol, score, components };
   });
 

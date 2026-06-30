@@ -6,6 +6,7 @@
 import { buildWatchlist, momentum12_1, type FactorInput, type StrategyConfig, type Symbol } from '@stockbot/core';
 import { and, desc, eq, lte } from 'drizzle-orm';
 import { aggregateEventScore } from '../events/factor.js';
+import { sectorOf } from '../sectors.js';
 import { tradingDateKey } from '../market/calendar.js';
 import * as s from '../db/schema.js';
 import type { DB } from '../db/client.js';
@@ -27,12 +28,19 @@ export class WatchlistService {
       this.logger.warn('watchlist: 후보 유니버스 비어있음(WATCHLIST_SYMBOLS 미설정) — 스킵');
       return 0;
     }
+    // 당일 섹터 신호 1회 로드(종목별 섹터 점수 매핑용).
+    const date = tradingDateKey(asOf);
+    const sectorRows = await this.db
+      .select({ sector: s.sectorSignals.sector, score: s.sectorSignals.score })
+      .from(s.sectorSignals)
+      .where(eq(s.sectorSignals.date, date));
+    const sectorScores = new Map(sectorRows.map((r) => [r.sector, r.score]));
+
     const inputs: FactorInput[] = [];
     for (const symbol of universe) {
-      inputs.push(await this.factorsFor(symbol, asOf));
+      inputs.push(await this.factorsFor(symbol, asOf, sectorScores));
     }
     const ranked = buildWatchlist(inputs, this.config);
-    const date = tradingDateKey(asOf);
 
     await this.db.transaction(async (tx) => {
       await tx.delete(s.watchlist).where(eq(s.watchlist.date, date));
@@ -45,7 +53,7 @@ export class WatchlistService {
     return ranked.length;
   }
 
-  private async factorsFor(symbol: Symbol, asOf: number): Promise<FactorInput> {
+  private async factorsFor(symbol: Symbol, asOf: number, sectorScores: Map<string, number>): Promise<FactorInput> {
     // 모멘텀: 일봉 종가.
     const dailyBars = await this.bars.getBars(symbol, 'D', asOf, 300);
     const dailyCloses = dailyBars.map((b) => b.close);
@@ -74,6 +82,10 @@ export class WatchlistService {
     const scores = await this.eventScores.getScores([symbol], asOf);
     const eventScore = aggregateEventScore(scores, asOf);
 
+    // 섹터 신호: 종목 섹터 → 당일 섹터 점수(없으면 null = 중립).
+    const sector = sectorOf(symbol);
+    const sectorScore = sector ? sectorScores.get(sector) ?? null : null;
+
     return {
       symbol,
       tradingValue,
@@ -82,6 +94,7 @@ export class WatchlistService {
       per: f?.per ?? null,
       roe: f?.roe ?? null,
       eventScore,
+      sectorScore,
     };
   }
 }

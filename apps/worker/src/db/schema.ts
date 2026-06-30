@@ -61,6 +61,23 @@ export const fundamentals = pgTable(
   (t) => ({ pk: primaryKey({ columns: [t.symbol, t.date] }) }),
 );
 
+/**
+ * 일별 섹터/테마 신호(8장 확장): 뉴스 헤드라인 → LLM 으로 그날 강세/약세 섹터 점수화.
+ * 워치리스트가 종목의 섹터 점수를 팩터로 사용. date+sector 유니크.
+ */
+export const sectorSignals = pgTable(
+  'sector_signals',
+  {
+    date: varchar('date', { length: 10 }).notNull(), // YYYY-MM-DD (KST 거래일)
+    sector: varchar('sector', { length: 32 }).notNull(),
+    score: doublePrecision('score').notNull(), // -1(약세) ~ +1(강세)
+    rationale: text('rationale'),
+    headlineCount: integer('headline_count').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.date, t.sector] }) }),
+);
+
 /** 수집 상태: source/symbol/timeframe 별 마지막 적재 지점 커서. */
 export const collectorState = pgTable(
   'collector_state',

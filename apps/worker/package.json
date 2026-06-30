@@ -10,6 +10,7 @@
     "backtest": "tsx src/cli/backtest.ts",
     "paramsweep": "tsx src/cli/paramsweep.ts",
     "watchlist": "tsx src/cli/watchlist.ts",
+    "sectors": "tsx src/cli/sectors.ts",
     "symbols": "tsx src/cli/symbols.ts",
     "tick": "tsx src/cli/tick.ts",
     "control": "tsx src/cli/control.ts",

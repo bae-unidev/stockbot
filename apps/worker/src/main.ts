@@ -41,6 +41,8 @@ async function bootstrapToday(c: Container, now: number): Promise<void> {
   const day = tradingDateKey(now);
   const rows = await c.db.select({ s: schema.watchlist.symbol }).from(schema.watchlist).where(eq(schema.watchlist.date, day)).limit(1);
   if (rows.length === 0) {
+    // 섹터 신호 먼저(없을 때만, Opus 호출 절약), 그 다음 워치리스트.
+    await c.sectorSignal.rebuild(now).catch((err) => logger.error({ err }, 'bootstrap: sector signal 실패 — 기존 팩터로'));
     const n = await c.watchlist.rebuild(now, universe);
     logger.info({ day, watchlist: n }, 'bootstrap: 당일 워치리스트 산출');
   } else {
@@ -107,6 +109,8 @@ async function main() {
       onStopGuard: (now) => runStopGuard(tickDeps, now),
       // 개장 전: 레이어1 워치리스트 산출(모멘텀/밸류/퀄리티/event_score 복합팩터).
       onPreOpen: async (now) => {
+        // 뉴스 → 섹터 신호 먼저(워치리스트 섹터 팩터 입력), 그 다음 워치리스트.
+        await c.sectorSignal.rebuild(now).catch((err) => logger.error({ err }, 'sector signal rebuild failed — 워치리스트는 기존 팩터로'));
         await c.watchlist.rebuild(now, c.config.defaultUniverse);
       },
       onPostClose: async (now) => {

@@ -44,6 +44,7 @@ export interface StrategyConfig {
     value: number;
     quality: number;
     event: number; // 노이즈 크므로 작게 시작
+    sector: number; // 뉴스 기반 그날 강세 섹터 가중(8장 확장)
   };
 }
 
@@ -83,9 +84,10 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   watchlistSize: 15,
   minTradingValue: 1_000_000_000, // 10억원
   factorWeights: {
-    momentum: 0.35,
-    value: 0.25,
-    quality: 0.3,
+    momentum: 0.3,
+    value: 0.2,
+    quality: 0.25,
     event: 0.1,
+    sector: 0.15, // 그날 뉴스 강세 섹터
   },
 };

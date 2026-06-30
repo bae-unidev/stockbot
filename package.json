@@ -22,6 +22,7 @@
     "control": "pnpm --filter @stockbot/worker control",
     "replay": "pnpm --filter @stockbot/worker replay",
     "watchlist": "pnpm --filter @stockbot/worker watchlist",
+    "sectors": "pnpm --filter @stockbot/worker sectors",
     "symbols": "pnpm --filter @stockbot/worker symbols",
     "reset": "pnpm --filter @stockbot/worker reset",
     "dashboard": "pnpm --filter @stockbot/dashboard dev",

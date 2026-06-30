@@ -84,9 +84,8 @@ export class EventEnrichment {
     const res = await this.client.messages.create({
       model: this.opts.model,
       max_tokens: 512,
-      temperature: 0, // 결정적 루브릭(8장)
-      system: RUBRIC,
-      output_config: { format: { type: 'json_schema', schema: JSON_SCHEMA } },
+      system: RUBRIC, // 결정적 루브릭(8장). 최신 모델은 temperature 미지원이라 생략.
+      output_config: { format: { type: 'json_schema', schema: JSON_SCHEMA }, effort: 'low' },
       messages: [{ role: 'user', content: `다음 공시/뉴스를 평가:\n${content}` }],
     } as Anthropic.MessageCreateParamsNonStreaming);
 

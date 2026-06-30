@@ -17,6 +17,7 @@ import { Notifier } from './notifier/index.js';
 import { Collector } from './collector/index.js';
 import { EventIngestion } from './events/ingestion.js';
 import { EventEnrichment } from './events/enrichment.js';
+import { SectorSignalService } from './events/sector-signal.js';
 import { WatchlistService } from './watchlist/index.js';
 import type Redis from 'ioredis';
 
@@ -35,6 +36,7 @@ export interface Container {
   collector: Collector;
   ingestion: EventIngestion;
   enrichment: EventEnrichment | null;
+  sectorSignal: SectorSignalService;
   watchlist: WatchlistService;
   shutdown: () => Promise<void>;
 }
@@ -65,6 +67,11 @@ export function buildContainer(overrides?: Partial<AppConfig>): Container {
   const control = orderManager ? new ControlService(repos.controlCommands, repos.positions, orderManager, risk, notifier, logger) : null;
   const collector = new Collector(db, repos.bars, logger, kis?.marketData);
   const watchlist = new WatchlistService(db, repos.bars, repos.eventScores, config.strategy, logger);
+  const sectorSignal = new SectorSignalService(db, logger, {
+    apiKey: config.env.ANTHROPIC_API_KEY,
+    model: config.env.LLM_MODEL,
+    promptVersion: config.env.EVENT_PROMPT_VERSION,
+  });
   const ingestion = new EventIngestion(db, logger, config.env.DART_API_KEY);
   const enrichment = config.env.ANTHROPIC_API_KEY
     ? new EventEnrichment(db, ingestion, logger, {
@@ -94,6 +101,7 @@ export function buildContainer(overrides?: Partial<AppConfig>): Container {
     collector,
     ingestion,
     enrichment,
+    sectorSignal,
     watchlist,
     shutdown,
   };

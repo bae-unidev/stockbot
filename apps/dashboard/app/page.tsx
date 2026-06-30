@@ -17,6 +17,7 @@ interface RiskRow { date: string; daily_loss_pct: number; kill_switch: boolean; 
 interface ScoreRow { symbol: string; sentiment: number; event_type: string | null; confidence: number; published_at: string }
 interface SnapRow { equity: number | null; cash: number | null }
 interface CmdRow { id: number; kind: string; status: string; created_at: string; executed_at: string | null; result: unknown }
+interface SectorRow { sector: string; score: number; rationale: string | null }
 
 /** KST(UTC+9) 거래일 키 YYYY-MM-DD. */
 function kstDay(ts: number): string {
@@ -68,7 +69,7 @@ async function loadDays(): Promise<string[]> {
 
 async function load(day: string, isLatest: boolean) {
   const { start, end } = dayBounds(day);
-  const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd] = await Promise.all([
+  const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd, sectors] = await Promise.all([
     sql<Position[]>`select symbol, quantity, avg_price from positions order by symbol`,
     sql<OrderRow[]>`select client_order_id, symbol, side, quantity, status, avg_fill_price, reason, updated_at from orders where updated_at >= ${start} and updated_at <= ${end} order by updated_at desc limit 100`,
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts >= ${start} and ts <= ${end} order by ts desc limit 100`,
@@ -78,6 +79,7 @@ async function load(day: string, isLatest: boolean) {
     sql<SnapRow[]>`select equity, cash from tick_runs where equity is not null and started_at >= ${start} and started_at <= ${end} order by id desc limit 1`,
     sql<CmdRow[]>`select id, kind, status, created_at, executed_at, result from control_commands order by id desc limit 8`,
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts <= ${end} order by ts asc`,
+    sql<SectorRow[]>`select sector, score, rationale from sector_signals where date = ${day} order by score desc`,
   ]);
 
   // 포지션: 최신일=브로커 잔고(진실의 원천), 과거일=체결 누적 재구성(그날 종료 시점).
@@ -96,7 +98,7 @@ async function load(day: string, isLatest: boolean) {
 
   const names = await loadSymbolNames();
   const realized = realizedByDay(fillsUpToEnd);
-  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized };
+  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, sectors };
 }
 
 function fmt(n: number | null | undefined, digits = 0) {
@@ -142,7 +144,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
   const days = await loadDays();
   const selectedDay = searchParams.day && days.includes(searchParams.day) ? searchParams.day : days[0] ?? kstDay(Date.now());
   const isLatest = selectedDay === (days[0] ?? selectedDay);
-  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized } = await load(selectedDay, isLatest);
+  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, sectors } = await load(selectedDay, isLatest);
 
   // 파생 지표.
   let investedValue = 0;
@@ -194,6 +196,24 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
               <div className="metric"><span className="muted"><Term t="킬스위치">킬스위치</Term></span><span className="v">{risk.kill_switch ? '🔴 ON' : '🟢 OFF'}</span></div>
             </>
           ) : <div className="empty">이 날짜 리스크 기록 없음</div>}
+        </section>
+
+        <section className="panel">
+          <h2>오늘의 강세/약세 섹터 (뉴스·LLM)</h2>
+          {sectors.length === 0 ? <div className="empty">섹터 신호 없음 (뉴스 미수집 / API키 미설정)</div> : (
+            <table>
+              <thead><tr><th>섹터</th><th className="right">점수</th><th>근거</th></tr></thead>
+              <tbody>
+                {sectors.filter((s) => s.score !== 0).map((s) => (
+                  <tr key={s.sector}>
+                    <td>{s.score > 0 ? '▲' : '▼'} {s.sector}</td>
+                    <td className={`right ${s.score > 0 ? 'green' : 'red'}`}>{s.score >= 0 ? '+' : ''}{s.score.toFixed(2)}</td>
+                    <td className="muted text-[12px]">{s.rationale}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </section>
 
         <section className="panel" style={{ gridColumn: '1 / -1' }}>
