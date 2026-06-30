@@ -14,9 +14,9 @@ import type {
 describe('buildWatchlist', () => {
   it('filters illiquid names and ranks by composite score', () => {
     const inputs: FactorInput[] = [
-      { symbol: 'A', tradingValue: 5e9, momentum: 0.5, pbr: 0.8, per: 5, roe: 0.2, eventScore: 0.3, sectorScore: 0.2 },
-      { symbol: 'B', tradingValue: 5e9, momentum: -0.2, pbr: 3, per: 40, roe: 0.02, eventScore: -0.1, sectorScore: -0.2 },
-      { symbol: 'C', tradingValue: 1e6, momentum: 0.9, pbr: 0.5, per: 3, roe: 0.4, eventScore: 0.9, sectorScore: 0.5 }, // illiquid
+      { symbol: 'A', tradingValue: 5e9, momentum: 0.5, pbr: 0.8, per: 5, roe: 0.2, eventScore: 0.3, sectorScore: 0.2, volumeSurge: 1.5 },
+      { symbol: 'B', tradingValue: 5e9, momentum: -0.2, pbr: 3, per: 40, roe: 0.02, eventScore: -0.1, sectorScore: -0.2, volumeSurge: 0.8 },
+      { symbol: 'C', tradingValue: 1e6, momentum: 0.9, pbr: 0.5, per: 3, roe: 0.4, eventScore: 0.9, sectorScore: 0.5, volumeSurge: 3 }, // illiquid
     ];
     const ranked = buildWatchlist(inputs, DEFAULT_STRATEGY_CONFIG);
     expect(ranked.map((r) => r.symbol)).not.toContain('C');

@@ -18,7 +18,7 @@ interface ScoreRow { symbol: string; sentiment: number; event_type: string | nul
 interface SnapRow { equity: number | null; cash: number | null }
 interface CmdRow { id: number; kind: string; status: string; created_at: string; executed_at: string | null; result: unknown }
 interface SectorRow { sector: string; score: number; rationale: string | null }
-interface WatchComponents { momentum?: number; value?: number; quality?: number; event?: number; sector?: number }
+interface WatchComponents { momentum?: number; value?: number; quality?: number; event?: number; sector?: number; volume?: number }
 interface WatchRow { symbol: string; rank: number; score: number; components: WatchComponents | null }
 
 /** KST(UTC+9) 거래일 키 YYYY-MM-DD. */
@@ -61,11 +61,14 @@ function positionsFromFills(fills: FillRow[]): Position[] {
   return [...cost.entries()].filter(([, c]) => c.qty > 0).map(([symbol, c]) => ({ symbol, quantity: c.qty, avg_price: c.avg }));
 }
 
-/** 활동(틱)이 있었던 KST 거래일 목록(최신순). */
+/** 활동(틱) 또는 워치리스트가 있는 KST 거래일 목록(최신순). 개장 전 산출된 당일도 포함. */
 async function loadDays(): Promise<string[]> {
   const rows = await sql<{ day: string }[]>`
-    select distinct (started_at at time zone 'Asia/Seoul')::date::text as day
-    from tick_runs order by day desc limit 60`;
+    select day from (
+      select distinct (started_at at time zone 'Asia/Seoul')::date::text as day from tick_runs
+      union
+      select distinct date as day from watchlist
+    ) d where day is not null order by day desc limit 60`;
   return rows.map((r) => r.day);
 }
 
@@ -121,7 +124,7 @@ function ago(iso: string | null): string {
   return `${Math.floor(s / 86400)}일 전`;
 }
 const CMD_LABEL: Record<string, string> = { flatten: '포지션 정리', kill: '킬스위치', kill_off: '킬스위치 해제' };
-const FACTOR_LABEL: Record<string, string> = { momentum: '모멘텀', value: '밸류', quality: '퀄리티', event: '이벤트', sector: '섹터' };
+const FACTOR_LABEL: Record<string, string> = { momentum: '모멘텀', value: '밸류', quality: '퀄리티', event: '이벤트', sector: '섹터', volume: '거래량' };
 /** 워치리스트 종목의 최대 기여 팩터(왜 뽑혔는지) 라벨. */
 function topFactor(c: WatchComponents | null): string {
   if (!c) return '';
@@ -200,7 +203,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
           <h2><Term t="워치리스트">워치리스트</Term> — {selectedDay} ({watch.length})</h2>
           {watch.length === 0 ? <div className="empty">이 날짜 워치리스트 없음 (개장 전 산출 / 데이터 부족)</div> : (
             <table>
-              <thead><tr><th>#</th><th>종목</th><th className="right">종합점수</th><th className="right">모멘텀</th><th className="right">밸류</th><th className="right">퀄리티</th><th className="right">이벤트</th><th className="right"><Term t="섹터">섹터</Term></th><th>주도팩터</th></tr></thead>
+              <thead><tr><th>#</th><th>종목</th><th className="right">종합점수</th><th className="right">모멘텀</th><th className="right">밸류</th><th className="right">퀄리티</th><th className="right">이벤트</th><th className="right"><Term t="섹터">섹터</Term></th><th className="right"><Term t="거래량">거래량</Term></th><th>주도팩터</th></tr></thead>
               <tbody>
                 {watch.map((r) => {
                   const c = r.components ?? {};
@@ -216,6 +219,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
                       <td className={`right ${zc(c.quality)}`}>{z(c.quality)}</td>
                       <td className={`right ${zc(c.event)}`}>{z(c.event)}</td>
                       <td className={`right ${zc(c.sector)}`}>{z(c.sector)}</td>
+                      <td className={`right ${zc(c.volume)}`}>{z(c.volume)}</td>
                       <td className="muted text-[12px]">{topFactor(r.components)}</td>
                     </tr>
                   );

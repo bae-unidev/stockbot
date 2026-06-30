@@ -59,6 +59,15 @@ export class WatchlistService {
     const dailyCloses = dailyBars.map((b) => b.close);
     const momentum = momentum12_1(dailyCloses);
 
+    // 거래량 급증: 최근 2일 평균 거래량 / 직전 ~20일 평균(없거나 부족하면 null=중립).
+    const vols = dailyBars.map((b) => b.volume);
+    let volumeSurge: number | null = null;
+    if (vols.length >= 22) {
+      const recent = (vols[vols.length - 1]! + vols[vols.length - 2]!) / 2;
+      const base = vols.slice(-22, -2).reduce((a, v) => a + v, 0) / 20;
+      if (base > 0) volumeSurge = recent / base;
+    }
+
     // 유동성: 최근 일봉 거래대금(close*volume) 근사. 일봉 없으면 60m 폴백.
     let tradingValue = 0;
     const lastDaily = dailyBars[dailyBars.length - 1];
@@ -95,6 +104,7 @@ export class WatchlistService {
       roe: f?.roe ?? null,
       eventScore,
       sectorScore,
+      volumeSurge,
     };
   }
 }
