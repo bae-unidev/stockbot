@@ -18,6 +18,8 @@ interface ScoreRow { symbol: string; sentiment: number; event_type: string | nul
 interface SnapRow { equity: number | null; cash: number | null }
 interface CmdRow { id: number; kind: string; status: string; created_at: string; executed_at: string | null; result: unknown }
 interface SectorRow { sector: string; score: number; rationale: string | null }
+interface WatchComponents { momentum?: number; value?: number; quality?: number; event?: number; sector?: number }
+interface WatchRow { symbol: string; rank: number; score: number; components: WatchComponents | null }
 
 /** KST(UTC+9) 거래일 키 YYYY-MM-DD. */
 function kstDay(ts: number): string {
@@ -69,7 +71,7 @@ async function loadDays(): Promise<string[]> {
 
 async function load(day: string, isLatest: boolean) {
   const { start, end } = dayBounds(day);
-  const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd, sectors] = await Promise.all([
+  const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd, sectors, watch] = await Promise.all([
     sql<Position[]>`select symbol, quantity, avg_price from positions order by symbol`,
     sql<OrderRow[]>`select client_order_id, symbol, side, quantity, status, avg_fill_price, reason, updated_at from orders where updated_at >= ${start} and updated_at <= ${end} order by updated_at desc limit 100`,
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts >= ${start} and ts <= ${end} order by ts desc limit 100`,
@@ -80,6 +82,7 @@ async function load(day: string, isLatest: boolean) {
     sql<CmdRow[]>`select id, kind, status, created_at, executed_at, result from control_commands order by id desc limit 8`,
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts <= ${end} order by ts asc`,
     sql<SectorRow[]>`select sector, score, rationale from sector_signals where date = ${day} order by score desc`,
+    sql<WatchRow[]>`select symbol, rank, score, components from watchlist where date = ${day} order by rank`,
   ]);
 
   // 포지션: 최신일=브로커 잔고(진실의 원천), 과거일=체결 누적 재구성(그날 종료 시점).
@@ -98,7 +101,7 @@ async function load(day: string, isLatest: boolean) {
 
   const names = await loadSymbolNames();
   const realized = realizedByDay(fillsUpToEnd);
-  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, sectors };
+  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, sectors, watch };
 }
 
 function fmt(n: number | null | undefined, digits = 0) {
@@ -118,6 +121,15 @@ function ago(iso: string | null): string {
   return `${Math.floor(s / 86400)}일 전`;
 }
 const CMD_LABEL: Record<string, string> = { flatten: '포지션 정리', kill: '킬스위치', kill_off: '킬스위치 해제' };
+const FACTOR_LABEL: Record<string, string> = { momentum: '모멘텀', value: '밸류', quality: '퀄리티', event: '이벤트', sector: '섹터' };
+/** 워치리스트 종목의 최대 기여 팩터(왜 뽑혔는지) 라벨. */
+function topFactor(c: WatchComponents | null): string {
+  if (!c) return '';
+  const entries = Object.entries(c).filter(([, v]) => typeof v === 'number') as [string, number][];
+  if (!entries.length) return '';
+  const [k, v] = entries.reduce((a, b) => (Math.abs(b[1]) > Math.abs(a[1]) ? b : a));
+  return `${FACTOR_LABEL[k] ?? k} ${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+}
 
 function diagClass(d: string): string {
   if (d.startsWith('entry')) return 'green';
@@ -144,7 +156,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
   const days = await loadDays();
   const selectedDay = searchParams.day && days.includes(searchParams.day) ? searchParams.day : days[0] ?? kstDay(Date.now());
   const isLatest = selectedDay === (days[0] ?? selectedDay);
-  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, sectors } = await load(selectedDay, isLatest);
+  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, sectors, watch } = await load(selectedDay, isLatest);
 
   // 파생 지표.
   let investedValue = 0;
@@ -184,6 +196,35 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
       </div>
 
       <div className="grid-cards">
+        <section className="panel" style={{ gridColumn: '1 / -1' }}>
+          <h2><Term t="워치리스트">워치리스트</Term> — {selectedDay} ({watch.length})</h2>
+          {watch.length === 0 ? <div className="empty">이 날짜 워치리스트 없음 (개장 전 산출 / 데이터 부족)</div> : (
+            <table>
+              <thead><tr><th>#</th><th>종목</th><th className="right">종합점수</th><th className="right">모멘텀</th><th className="right">밸류</th><th className="right">퀄리티</th><th className="right">이벤트</th><th className="right"><Term t="섹터">섹터</Term></th><th>주도팩터</th></tr></thead>
+              <tbody>
+                {watch.map((r) => {
+                  const c = r.components ?? {};
+                  const z = (v?: number) => (v == null ? '–' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}`);
+                  const zc = (v?: number) => (v == null ? 'muted' : v > 0 ? 'green' : v < 0 ? 'red' : 'muted');
+                  return (
+                    <tr key={r.symbol}>
+                      <td>{r.rank}</td>
+                      <td>{nm(r.symbol, names)}</td>
+                      <td className={`right ${r.score >= 0 ? 'green' : 'red'}`}>{r.score >= 0 ? '+' : ''}{r.score.toFixed(2)}</td>
+                      <td className={`right ${zc(c.momentum)}`}>{z(c.momentum)}</td>
+                      <td className={`right ${zc(c.value)}`}>{z(c.value)}</td>
+                      <td className={`right ${zc(c.quality)}`}>{z(c.quality)}</td>
+                      <td className={`right ${zc(c.event)}`}>{z(c.event)}</td>
+                      <td className={`right ${zc(c.sector)}`}>{z(c.sector)}</td>
+                      <td className="muted text-[12px]">{topFactor(r.components)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
+
         <ControlPanel killSwitchOn={!!risk?.kill_switch} positionsCount={positions.length} />
 
         <section className="panel">
