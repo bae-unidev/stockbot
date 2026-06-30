@@ -93,7 +93,16 @@ async function main() {
 
   const scheduler = new Scheduler(
     {
-      onHourlyTick: (now) => runLiveTick(tickDeps, now),
+      onHourlyTick: async (now) => {
+        // 틱 전에 직전 시간봉 수집(장중 신선도). 안 하면 엔진이 직전 완성봉 없이 stale 데이터로 판단.
+        const specs = c.config.defaultUniverse.map((symbol) => ({ symbol, market: 'KS' as const }));
+        try {
+          await c.collector.accumulateKisHourly(specs);
+        } catch (err) {
+          logger.error({ err }, 'pre-tick hourly collect failed — stale 봉으로 진행될 수 있음');
+        }
+        await runLiveTick(tickDeps, now);
+      },
       // 매분: 인트라아워 스탑 가드(틱 사이 손절 방어).
       onStopGuard: (now) => runStopGuard(tickDeps, now),
       // 개장 전: 레이어1 워치리스트 산출(모멘텀/밸류/퀄리티/event_score 복합팩터).
