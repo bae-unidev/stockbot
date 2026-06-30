@@ -3,11 +3,50 @@
  * 순수 Node + TS 백그라운드 프로세스(웹 프레임워크 미사용, 2장).
  */
 import './bootstrap.js';
-import { buildContainer, logger } from './container.js';
+import { eq } from 'drizzle-orm';
+import { buildContainer, logger, type Container } from './container.js';
 import { Scheduler } from './scheduler/index.js';
 import { runLiveTick, type TickDeps } from './tick/index.js';
 import { runStopGuard } from './tick/stop-guard.js';
-import { tradingDateKey } from './market/calendar.js';
+import { isHoliday, isMarketOpen, tradingDateKey } from './market/calendar.js';
+import * as schema from './db/schema.js';
+
+const ymd = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * 부팅 자가복구(재시작/배포 대비): 워커가 개장 후(08:30 워치리스트 크론 이후)나 장중에 떠도
+ * 첫 틱이 정상 동작하도록 당일 전제조건을 보장한다. 모든 작업 멱등(upsert/조건부).
+ *  1) 유동성 필터용 유니버스 일봉 + 국면용 지수 일봉 최근분 확보
+ *  2) 장중이면 당일 시간봉(부분봉이라도) 확보
+ *  3) 당일 워치리스트가 없으면 산출
+ * 휴장일/비-live/ KIS 미설정이면 스킵.
+ */
+async function bootstrapToday(c: Container, now: number): Promise<void> {
+  if (c.config.runMode !== 'live' || !c.kis) return;
+  if (isHoliday(now)) {
+    logger.info('bootstrap: 휴장일 — 스킵');
+    return;
+  }
+  const universe = c.config.defaultUniverse;
+  const specs = universe.map((symbol) => ({ symbol, market: 'KS' as const }));
+  const dailyTargets = c.config.indexSymbol ? [...specs, { symbol: c.config.indexSymbol, market: 'KS' as const }] : specs;
+
+  // 1) 일봉 최근분(유니버스=유동성 필터, 지수=200일선). 최근 ~20거래일 범위 멱등 누적.
+  await c.collector.accumulateKisDaily(dailyTargets, ymd(new Date(now - 20 * 86_400_000)), ymd(new Date(now)));
+
+  // 2) 장중이면 당일 시간봉 확보(지표가 당일 데이터를 보게).
+  if (isMarketOpen(now)) await c.collector.accumulateKisHourly(specs);
+
+  // 3) 당일 워치리스트가 없으면 산출(개장 후 재시작 대비).
+  const day = tradingDateKey(now);
+  const rows = await c.db.select({ s: schema.watchlist.symbol }).from(schema.watchlist).where(eq(schema.watchlist.date, day)).limit(1);
+  if (rows.length === 0) {
+    const n = await c.watchlist.rebuild(now, universe);
+    logger.info({ day, watchlist: n }, 'bootstrap: 당일 워치리스트 산출');
+  } else {
+    logger.info({ day }, 'bootstrap: 당일 워치리스트 이미 존재 — 스킵');
+  }
+}
 
 async function main() {
   const c = buildContainer();
@@ -42,6 +81,14 @@ async function main() {
     logger.info('startup reconciliation complete');
   } catch (err) {
     logger.error({ err }, 'startup reconciliation failed — 계속 진행하나 첫 틱에서 재시도됨');
+  }
+
+  // 부팅 자가복구: 재시작/배포가 개장 후에 일어나도 당일 데이터·워치리스트를 보장(실패해도 계속).
+  try {
+    await bootstrapToday(c, Date.now());
+    logger.info('startup bootstrap complete');
+  } catch (err) {
+    logger.error({ err }, 'startup bootstrap failed — 계속 진행(다음 크론에서 보정)');
   }
 
   const scheduler = new Scheduler(
