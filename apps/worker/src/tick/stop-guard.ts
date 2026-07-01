@@ -51,6 +51,11 @@ export async function runStopGuard(deps: TickDeps, now: number): Promise<void> {
     for (const o of result.placed) {
       await setCooldown(redis, o.symbol, now + cooldownMs);
     }
+    // 청산 직후 즉시 재대사: DB 포지션을 브로커와 동기화(안 하면 다음 시간봉 대사까지 매분
+    // 이미 판 종목을 재차 팔려다 "잔고 없음"으로 실패 반복). 청산이 실제 발생했을 때만.
+    if (result.placed.length > 0) {
+      await deps.orderManager!.reconcile().catch((err) => logger.error({ err }, 'stop guard post-liquidation reconcile failed'));
+    }
     await deps.notifier.notify('warn', 'intra-hour stop triggered', {
       liquidated: result.placed.map((o) => ({ symbol: o.symbol, qty: o.quantity })),
       rejected: result.rejected.length,
