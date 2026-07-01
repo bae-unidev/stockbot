@@ -3,7 +3,8 @@
  * 보유 종목의 실시간 현재가를 자주(분 단위) 확인해 하드/트레일링 스탑 도달 시 즉시 시장가 청산.
  *
  * 메인 hourly 틱과 동일 Redis 락을 공유해 직렬화(이중 제출 방지). 빠르게 끝나고 즉시 해제.
- * 대사/시그널은 하지 않는다 — 마지막으로 대사된 포지션(DB) 기준의 보호 전용 경로.
+ * 매분 시작에 브로커 잔고를 DB 로 대사(원장 동기화) → 스탑을 실잔고 기준으로 판단하고,
+ * DB positions 가 사실상 실시간 미러가 되어 대시보드가 신선한 포지션을 본다. 시그널(진입)은 하지 않는다.
  */
 import type { OrderIntent, Symbol } from '@stockbot/core';
 import { acquireTickLock, setCooldown } from '../redis.js';
@@ -17,6 +18,10 @@ export async function runStopGuard(deps: TickDeps, now: number): Promise<void> {
   if (!release) return; // 메인 틱이 진행 중 — 거기서 스탑을 처리한다.
 
   try {
+    // 원장 동기화(매분): 브로커 잔고 → DB positions. 대시보드가 ≤1분 신선한 실잔고를 보고,
+    // 스탑 판단도 브로커 실잔고 기준으로 한다. 실패 시 기존 DB 포지션으로 진행(보호 경로 유지).
+    await deps.orderManager!.reconcile().catch((err) => logger.warn({ err }, 'stop guard reconcile failed — 기존 DB 포지션 사용'));
+
     const positions = await deps.repos.positions.all();
     if (positions.length === 0) return;
 
@@ -50,11 +55,6 @@ export async function runStopGuard(deps: TickDeps, now: number): Promise<void> {
     const cooldownMs = config.strategy.reentryCooldownBars * 3600_000;
     for (const o of result.placed) {
       await setCooldown(redis, o.symbol, now + cooldownMs);
-    }
-    // 청산 직후 즉시 재대사: DB 포지션을 브로커와 동기화(안 하면 다음 시간봉 대사까지 매분
-    // 이미 판 종목을 재차 팔려다 "잔고 없음"으로 실패 반복). 청산이 실제 발생했을 때만.
-    if (result.placed.length > 0) {
-      await deps.orderManager!.reconcile().catch((err) => logger.error({ err }, 'stop guard post-liquidation reconcile failed'));
     }
     await deps.notifier.notify('warn', 'intra-hour stop triggered', {
       liquidated: result.placed.map((o) => ({ symbol: o.symbol, qty: o.quantity })),
