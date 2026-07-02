@@ -8,6 +8,7 @@
  */
 import type { OrderIntent, Symbol } from '@stockbot/core';
 import { acquireTickLock, setCooldown } from '../redis.js';
+import * as schema from '../db/schema.js';
 import type { TickDeps } from './index.js';
 
 const STOPGUARD_LOCK_TTL_MS = 45_000;
@@ -18,9 +19,18 @@ export async function runStopGuard(deps: TickDeps, now: number): Promise<void> {
   if (!release) return; // 메인 틱이 진행 중 — 거기서 스탑을 처리한다.
 
   try {
-    // 원장 동기화(매분): 브로커 잔고 → DB positions. 대시보드가 ≤1분 신선한 실잔고를 보고,
-    // 스탑 판단도 브로커 실잔고 기준으로 한다. 실패 시 기존 DB 포지션으로 진행(보호 경로 유지).
-    await deps.orderManager!.reconcile().catch((err) => logger.warn({ err }, 'stop guard reconcile failed — 기존 DB 포지션 사용'));
+    // 원장 동기화(매분): 브로커 잔고 → DB positions + 계좌 스냅샷(현금/총자산). 대시보드가 ≤1분 신선한
+    // 실잔고를 보고, 스탑 판단도 브로커 실잔고 기준. 실패 시 기존 DB 포지션으로 진행(보호 경로 유지).
+    const pf = await deps.orderManager!.reconcile().catch((err) => {
+      logger.warn({ err }, 'stop guard reconcile failed — 기존 DB 포지션 사용');
+      return null;
+    });
+    if (pf) {
+      await deps.db
+        .insert(schema.accountSnapshots)
+        .values({ ts: new Date(now), equity: pf.equity ?? pf.cash, cash: pf.cash })
+        .onConflictDoNothing();
+    }
 
     const positions = await deps.repos.positions.all();
     if (positions.length === 0) return;

@@ -100,7 +100,12 @@ async function load(day: string, isLatest: boolean) {
     sql<TickRow[]>`select id, started_at, status, intents_count, orders_count, error, detail from tick_runs where started_at >= ${start} and started_at <= ${end} order by started_at desc limit 50`,
     sql<RiskRow[]>`select date, daily_loss_pct, kill_switch, start_equity from risk_state where date = ${day} limit 1`,
     sql<ScoreRow[]>`select symbol, sentiment, event_type, confidence, published_at from event_scores order by scored_at desc limit 15`,
-    sql<SnapRow[]>`select equity, cash from tick_runs where equity is not null and started_at >= ${start} and started_at <= ${end} order by id desc limit 1`,
+    sql<SnapRow[]>`
+      select equity, cash from (
+        (select equity, cash, 1 as pri from account_snapshots where ts <= ${end} order by ts desc limit 1)
+        union all
+        (select equity, cash, 2 as pri from tick_runs where equity is not null and started_at >= ${start} and started_at <= ${end} order by id desc limit 1)
+      ) u order by pri limit 1`,
     sql<CmdRow[]>`select id, kind, status, created_at, executed_at, result from control_commands order by id desc limit 8`,
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts, client_order_id from fills where ts <= ${end} order by ts asc`,
     sql<SectorRow[]>`select sector, score, rationale from sector_signals where date = ${day} order by score desc`,

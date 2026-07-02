@@ -57,6 +57,13 @@
       "when": 1782827299439,
       "tag": "0007_ambitious_owl",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783008726767,
+      "tag": "0008_cynical_slayback",
+      "breakpoints": true
     }
   ]
 }

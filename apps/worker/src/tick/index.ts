@@ -58,6 +58,8 @@ export async function runLiveTick(deps: TickDeps, now: number): Promise<void> {
     await deps.orderManager.reconcileOrders(tradingDateKey(now).replace(/-/g, ''));
     const pf = await deps.orderManager.reconcile();
     const equity = pf.equity ?? pf.cash;
+    // 계좌 스냅샷(현금/총자산) — 대시보드 실시간 KPI. 분단위 스탑가드가 장중 갱신을 이어받음.
+    await deps.db.insert(s.accountSnapshots).values({ ts: new Date(now), equity, cash: pf.cash }).onConflictDoNothing();
 
     // 2) 리스크: 당일 기준 자산 고정 + 손실률 갱신.
     await deps.risk.startDay(now, equity);

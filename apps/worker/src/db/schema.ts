@@ -227,6 +227,16 @@ export const controlCommands = pgTable('control_commands', {
   result: jsonb('result'), // { placed, rejected, reason }
 });
 
+/**
+ * 계좌 스냅샷: 대사(분단위) 때마다 브로커 실잔고(현금/총자산) 기록.
+ * 대시보드 KPI 가 실시간 현금/총자산을 이걸로 표시(틱당 1회·주문전 스냅샷의 지연 해소).
+ */
+export const accountSnapshots = pgTable('account_snapshots', {
+  ts: timestamp('ts', { withTimezone: true }).notNull().defaultNow().primaryKey(),
+  equity: doublePrecision('equity').notNull(),
+  cash: doublePrecision('cash').notNull(),
+});
+
 /** 일일 손실 누적 + 킬스위치 상태(날짜별). */
 export const riskState = pgTable('risk_state', {
   date: varchar('date', { length: 10 }).primaryKey(),
