@@ -95,7 +95,7 @@ async function load(day: string, isLatest: boolean) {
   const { start, end } = dayBounds(day);
   const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd, sectors, watch] = await Promise.all([
     sql<Position[]>`select symbol, quantity, avg_price from positions order by symbol`,
-    sql<OrderRow[]>`select client_order_id, symbol, side, quantity, status, avg_fill_price, reason, updated_at from orders where updated_at >= ${start} and updated_at <= ${end} order by updated_at desc limit 100`,
+    sql<OrderRow[]>`select client_order_id, symbol, side, quantity, status, avg_fill_price, reason, updated_at from orders where created_at >= ${start} and created_at <= ${end} order by created_at desc limit 100`,
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts >= ${start} and ts <= ${end} order by ts desc limit 100`,
     sql<TickRow[]>`select id, started_at, status, intents_count, orders_count, error, detail from tick_runs where started_at >= ${start} and started_at <= ${end} order by started_at desc limit 50`,
     sql<RiskRow[]>`select date, daily_loss_pct, kill_switch, start_equity from risk_state where date = ${day} limit 1`,
