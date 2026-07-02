@@ -20,6 +20,15 @@ export interface BrokerFill {
   totalFilledQty: number;
   avgFillPrice: number;
   canceled: boolean;
+  /** 체결 귀속 시각(epoch ms). 주문일자 기준 — 실현손익 날짜 귀속에 사용. */
+  ts?: number;
+}
+
+/** YYYYMMDD(KST) → 그 날 09:00 KST 의 epoch ms(체결 날짜 귀속용 근사). */
+function ordDateToEpoch(yyyymmdd?: string): number | undefined {
+  if (!yyyymmdd || yyyymmdd.length !== 8) return undefined;
+  const y = +yyyymmdd.slice(0, 4), mo = +yyyymmdd.slice(4, 6), d = +yyyymmdd.slice(6, 8);
+  return Date.UTC(y, mo - 1, d, 9, 0) - 9 * 3600_000; // KST 09:00
 }
 
 export class KisOrderGateway {
@@ -114,6 +123,7 @@ export class KisOrderGateway {
         totalFilledQty: qty,
         avgFillPrice: avg,
         canceled: o.cncl_yn === 'Y',
+        ts: ordDateToEpoch(o.ord_dt),
       };
     });
   }

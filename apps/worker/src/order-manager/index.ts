@@ -18,6 +18,8 @@ export interface BrokerFill {
   totalFilledQty: number;
   avgFillPrice: number;
   canceled: boolean;
+  /** 체결 귀속 시각(epoch ms). 없으면 대사 시각 사용. */
+  ts?: number;
 }
 
 /** 일별 체결 조회 소스(KIS 어댑터가 구조적으로 충족). */
@@ -111,7 +113,7 @@ export class OrderManager {
           price: bf.avgFillPrice,
           fee: Math.round(gross * 0.00015),
           tax: o.side === 'sell' ? Math.round(gross * 0.0018) : 0,
-          ts: this.clock.now(),
+          ts: bf.ts ?? this.clock.now(), // 체결 귀속일(주문일자) 우선 — 실현손익 날짜 정확
           brokerFillId: `${o.brokerOrderId}:${newFilled}`,
         });
       }

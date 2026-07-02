@@ -95,6 +95,7 @@ export const DailyCcldResponse = BaseResponse.extend({
         tot_ccld_amt: z.string().optional(), // 총체결금액
         avg_prvs: z.string().optional(), // 평균체결단가
         cncl_yn: z.string().optional(), // 취소여부 Y/N
+        ord_dt: z.string().optional(), // 주문일자 YYYYMMDD (체결 귀속일)
       }),
     )
     .optional(),

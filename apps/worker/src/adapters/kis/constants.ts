@@ -13,7 +13,7 @@ export const TR_ID = {
     buy: 'VTTC0802U',
     sell: 'VTTC0801U',
     balance: 'VTTC8434R',
-    orderList: 'VTTC8001R', // 일별 주문체결 조회
+    orderList: 'VTTC0081R', // 일별 주문체결 조회(모의투자 전용 코드 — 실전 TTTC8001R 의 단순 V스왑 아님)
   },
   prod: {
     buy: 'TTTC0802U',

@@ -106,6 +106,7 @@ export class ReplayBroker implements OrderGateway {
         totalFilledQty: f.quantity,
         avgFillPrice: f.price,
         canceled: false,
+        ts: f.ts,
       }));
   }
 }
