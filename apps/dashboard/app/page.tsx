@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 interface Position { symbol: string; quantity: number; avg_price: number }
 interface OrderRow { client_order_id: string; symbol: string; side: string; quantity: number; status: string; avg_fill_price: number | null; reason: string | null; updated_at: string }
-interface FillRow { symbol: string; side: string; quantity: number; price: number; fee: number; tax: number; ts: string }
+interface FillRow { symbol: string; side: string; quantity: number; price: number; fee: number; tax: number; ts: string; client_order_id?: string }
 interface TickDetail { diagnostics?: Record<string, string>; indexAbove200dma?: boolean; watchlist?: string[]; rejected?: { symbol: string; reason: string }[] }
 interface TickRow { id: number; started_at: string; status: string; intents_count: number; orders_count: number; error: string | null; detail: TickDetail | null }
 interface RiskRow { date: string; daily_loss_pct: number; kill_switch: boolean; start_equity: number | null }
@@ -43,6 +43,25 @@ function realizedByDay(fills: FillRow[]): Map<string, number> {
     cost.set(f.symbol, c);
   }
   return byDay;
+}
+
+/** 매도 체결의 실현손익을 주문(client_order_id)별로 귀속(이동평균원가 기준). */
+function realizedByOrder(fills: FillRow[]): Map<string, number> {
+  const cost = new Map<string, { qty: number; avg: number }>();
+  const byOrder = new Map<string, number>();
+  for (const f of fills) {
+    const c = cost.get(f.symbol) ?? { qty: 0, avg: 0 };
+    if (f.side === 'buy') {
+      c.avg = (c.avg * c.qty + f.price * f.quantity + f.fee) / (c.qty + f.quantity || 1);
+      c.qty += f.quantity;
+    } else {
+      const pnl = (f.price - c.avg) * f.quantity - f.fee - f.tax;
+      if (f.client_order_id) byOrder.set(f.client_order_id, (byOrder.get(f.client_order_id) ?? 0) + pnl);
+      c.qty = Math.max(0, c.qty - f.quantity);
+    }
+    cost.set(f.symbol, c);
+  }
+  return byOrder;
 }
 
 /** 체결 누적으로 특정 시점 보유 포지션 재구성(이동평균원가). 과거 일자 종료 시점 보유 표시용. */
@@ -83,7 +102,7 @@ async function load(day: string, isLatest: boolean) {
     sql<ScoreRow[]>`select symbol, sentiment, event_type, confidence, published_at from event_scores order by scored_at desc limit 15`,
     sql<SnapRow[]>`select equity, cash from tick_runs where equity is not null and started_at >= ${start} and started_at <= ${end} order by id desc limit 1`,
     sql<CmdRow[]>`select id, kind, status, created_at, executed_at, result from control_commands order by id desc limit 8`,
-    sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts <= ${end} order by ts asc`,
+    sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts, client_order_id from fills where ts <= ${end} order by ts asc`,
     sql<SectorRow[]>`select sector, score, rationale from sector_signals where date = ${day} order by score desc`,
     sql<WatchRow[]>`select symbol, rank, score, components from watchlist where date = ${day} order by rank`,
   ]);
@@ -104,7 +123,8 @@ async function load(day: string, isLatest: boolean) {
 
   const names = await loadSymbolNames();
   const realized = realizedByDay(fillsUpToEnd);
-  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, sectors, watch };
+  const realizedOrders = realizedByOrder(fillsUpToEnd);
+  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch };
 }
 
 function fmt(n: number | null | undefined, digits = 0) {
@@ -159,7 +179,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
   const days = await loadDays();
   const selectedDay = searchParams.day && days.includes(searchParams.day) ? searchParams.day : days[0] ?? kstDay(Date.now());
   const isLatest = selectedDay === (days[0] ?? selectedDay);
-  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, sectors, watch } = await load(selectedDay, isLatest);
+  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch } = await load(selectedDay, isLatest);
 
   // 파생 지표.
   let investedValue = 0;
@@ -373,17 +393,21 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
           <h2>주문 — {selectedDay} ({orders.length})</h2>
           {orders.length === 0 ? <div className="empty">이 날짜 주문 없음</div> : (
             <table>
-              <thead><tr><th>종목</th><th>방향</th><th className="right">수량</th><th>상태</th><th>사유</th></tr></thead>
+              <thead><tr><th>종목</th><th>방향</th><th className="right">수량</th><th>상태</th><th className="right"><Term t="실현손익">실현손익</Term></th><th>사유</th></tr></thead>
               <tbody>
-                {orders.map((o) => (
+                {orders.map((o) => {
+                  const pnl = o.side === 'sell' ? realizedOrders.get(o.client_order_id) : undefined;
+                  return (
                   <tr key={o.client_order_id}>
                     <td>{nm(o.symbol, names)}</td>
                     <td className={o.side === 'buy' ? 'green' : 'red'}>{o.side}</td>
                     <td className="right">{o.quantity}</td>
                     <td><span className={`pill ${o.status === 'filled' || o.status === 'accepted' ? 'ok' : o.status === 'rejected' ? 'bad' : ''}`}>{o.status}</span></td>
+                    <td className={`right ${pnl == null ? 'muted' : pnl >= 0 ? 'green' : 'red'}`}>{pnl == null ? '–' : `${pnl >= 0 ? '+' : ''}${fmt(pnl)}`}</td>
                     <td className={`text-[12px] ${o.status === 'rejected' ? 'red' : 'muted'}`}>{o.reason ?? '–'}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}
