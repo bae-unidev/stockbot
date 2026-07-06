@@ -78,7 +78,7 @@ export class KisClient {
 
     if (res.status === 401 || res.status === 403) throw new KisAuthError(`${res.status}: ${text}`);
 
-    // KIS 는 레이트리밋(EGW00201)을 HTTP 500 + 본문 rt_cd=1 로 주기도 한다 → 상태코드보다 본문을 먼저 본다.
+    // KIS 는 레이트리밋을 HTTP 500 + 본문 rt_cd=1 로 주기도 한다 → 상태코드보다 본문을 먼저 본다.
     let json: unknown = null;
     try {
       json = JSON.parse(text);
@@ -86,8 +86,9 @@ export class KisClient {
       /* 비-JSON */
     }
     const obj = (json ?? {}) as { rt_cd?: string; msg_cd?: string; msg1?: string };
-    if (obj.msg_cd === 'EGW00201' || res.status === 429) {
-      throw new KisRateLimitError(obj.msg1 ?? `429 rate limited: ${text.slice(0, 120)}`, 'EGW00201');
+    // 레이트리밋 코드: EGW00201(접근토큰 초당), EGW00215(원장 초당 거래건수) 모두 백오프 재시도 대상.
+    if (obj.msg_cd === 'EGW00201' || obj.msg_cd === 'EGW00215' || res.status === 429) {
+      throw new KisRateLimitError(obj.msg1 ?? `rate limited: ${text.slice(0, 120)}`, obj.msg_cd ?? 'EGW00201');
     }
     if (!res.ok) throw new KisError(`KIS ${req.trId} HTTP ${res.status}: ${text.slice(0, 200)}`);
     if (json == null) throw new KisError(`KIS ${req.trId} non-JSON response: ${text.slice(0, 200)}`);

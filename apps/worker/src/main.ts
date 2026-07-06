@@ -96,8 +96,13 @@ async function main() {
   const scheduler = new Scheduler(
     {
       onHourlyTick: async (now) => {
-        // 틱 전에 직전 시간봉 수집(장중 신선도). 안 하면 엔진이 직전 완성봉 없이 stale 데이터로 판단.
-        const specs = c.config.defaultUniverse.map((symbol) => ({ symbol, market: 'KS' as const }));
+        // 틱 전에 직전 시간봉 수집(장중 신선도) — 단, 틱이 실제 평가하는 종목(당일 워치리스트 + 보유)만.
+        // 유니버스 전체(수십 종목)를 매시 수집하면 KIS 초당 한도(EGW00215) 초과로 틱이 막힘.
+        const day = tradingDateKey(now);
+        const wl = await c.db.select({ sym: schema.watchlist.symbol }).from(schema.watchlist).where(eq(schema.watchlist.date, day));
+        const held = (await c.repos.positions.all()).map((p) => p.symbol);
+        const targets = [...new Set([...wl.map((r) => r.sym), ...held])];
+        const specs = (targets.length ? targets : c.config.defaultUniverse).map((symbol) => ({ symbol, market: 'KS' as const }));
         try {
           await c.collector.accumulateKisHourly(specs);
         } catch (err) {
