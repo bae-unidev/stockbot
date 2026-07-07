@@ -73,7 +73,21 @@ export class KisClient {
       if (req.hashBody) headers.hashkey = await this.hashkey(req.body);
     }
 
-    const res = await fetch(url, { method: req.method, headers, body });
+    // fetch 타임아웃(AbortController): KIS 연결이 멈추면(hang) await 가 영원히 안 끝나
+    // Bottleneck(동시 1) 이 막혀 뒤의 모든 호출(틱 포함)이 정지한다. 8초 초과 시 중단 → 재시도.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8_000);
+    let res: Response;
+    try {
+      res = await fetch(url, { method: req.method, headers, body, signal: ctrl.signal });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new KisRateLimitError(`KIS ${req.trId} fetch timeout(8s)`, 'TIMEOUT'); // 재시도 대상
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     const text = await res.text();
 
     if (res.status === 401 || res.status === 403) throw new KisAuthError(`${res.status}: ${text}`);
