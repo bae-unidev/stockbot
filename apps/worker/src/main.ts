@@ -8,7 +8,7 @@ import { buildContainer, logger, type Container } from './container.js';
 import { Scheduler } from './scheduler/index.js';
 import { runLiveTick, type TickDeps } from './tick/index.js';
 import { runStopGuard } from './tick/stop-guard.js';
-import { isHoliday, isMarketOpen, tradingDateKey } from './market/calendar.js';
+import { isHoliday, tradingDateKey } from './market/calendar.js';
 import * as schema from './db/schema.js';
 
 const ymd = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -28,26 +28,22 @@ async function bootstrapToday(c: Container, now: number): Promise<void> {
     return;
   }
   const universe = c.config.defaultUniverse;
-  const specs = universe.map((symbol) => ({ symbol, market: 'KS' as const }));
-  const dailyTargets = c.config.indexSymbol ? [...specs, { symbol: c.config.indexSymbol, market: 'KS' as const }] : specs;
-
-  // 1) 일봉 최근분(유니버스=유동성 필터, 지수=200일선). 최근 ~20거래일 범위 멱등 누적.
-  await c.collector.accumulateKisDaily(dailyTargets, ymd(new Date(now - 20 * 86_400_000)), ymd(new Date(now)));
-
-  // 2) 장중이면 당일 시간봉 확보(지표가 당일 데이터를 보게).
-  if (isMarketOpen(now)) await c.collector.accumulateKisHourly(specs);
-
-  // 3) 당일 워치리스트가 없으면 산출(개장 후 재시작 대비).
   const day = tradingDateKey(now);
   const rows = await c.db.select({ s: schema.watchlist.symbol }).from(schema.watchlist).where(eq(schema.watchlist.date, day)).limit(1);
-  if (rows.length === 0) {
-    // 섹터 신호 먼저(없을 때만, Opus 호출 절약), 그 다음 워치리스트.
-    await c.sectorSignal.rebuild(now).catch((err) => logger.error({ err }, 'bootstrap: sector signal 실패 — 기존 팩터로'));
-    const n = await c.watchlist.rebuild(now, universe);
-    logger.info({ day, watchlist: n }, 'bootstrap: 당일 워치리스트 산출');
-  } else {
-    logger.info({ day }, 'bootstrap: 당일 워치리스트 이미 존재 — 스킵');
+
+  // 당일 워치리스트가 이미 있으면(개장전 08:30 산출됨) 재시작 시 무거운 재수집 스킵 → 빠른 기동.
+  // KIS 초당 한도 때문에 74종목 일봉/시간봉 재수집이 부팅을 지연·레이트리밋 폭주시키던 문제 방지.
+  if (rows.length > 0) {
+    logger.info({ day }, 'bootstrap: 당일 워치리스트 존재 — 재수집 스킵(빠른 기동)');
+    return;
   }
+
+  // 워치리스트가 없을 때만(첫 기동/개장 후 최초): 일봉 확보 → 섹터신호 → 워치리스트 산출.
+  const dailyTargets = c.config.indexSymbol ? [...universe, c.config.indexSymbol] : universe;
+  await c.collector.accumulateKisDaily(dailyTargets.map((symbol) => ({ symbol, market: 'KS' as const })), ymd(new Date(now - 20 * 86_400_000)), ymd(new Date(now)));
+  await c.sectorSignal.rebuild(now).catch((err) => logger.error({ err }, 'bootstrap: sector signal 실패 — 기존 팩터로'));
+  const n = await c.watchlist.rebuild(now, universe);
+  logger.info({ day, watchlist: n }, 'bootstrap: 당일 워치리스트 산출');
 }
 
 async function main() {
