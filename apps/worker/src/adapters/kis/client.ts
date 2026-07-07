@@ -32,8 +32,9 @@ export class KisClient {
   ) {
     this.domain = KIS_DOMAIN[creds.env];
     this.env = creds.env;
-    // 모의투자는 초당 거래건수 제한이 빡빡 → 직렬화 + 최소 간격 350ms(≈초당 2~3건).
-    this.limiter = new Bottleneck({ minTime: 350, maxConcurrent: 1 });
+    // 모의투자는 초당 거래건수 제한이 매우 빡빡 → 직렬화 + 최소 간격 800ms(≈초당 1.25건).
+    // 너무 촘촘하면(350ms) EGW00215 rate-limit → 재시도 폭주(death spiral)로 워커가 멈춤.
+    this.limiter = new Bottleneck({ minTime: 800, maxConcurrent: 1 });
   }
 
   /** 레이트리밋(EGW00201/429)은 백오프 후 재시도. */

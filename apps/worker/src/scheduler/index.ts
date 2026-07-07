@@ -48,7 +48,7 @@ export class Scheduler {
     if (this.hooks.onStopGuard) {
       this.tasks.push(
         cron.schedule(
-          '* 9-15 * * 1-5',
+          '*/2 9-15 * * 1-5', // 2분마다(매분→2분: KIS 초당 한도 압박 완화)
           () => {
             const now = Date.now();
             if (!isMarketOpen(now)) return;
