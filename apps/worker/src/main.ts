@@ -96,18 +96,25 @@ async function main() {
   const scheduler = new Scheduler(
     {
       onHourlyTick: async (now) => {
-        // 틱 전에 직전 시간봉 수집(장중 신선도) — 단, 틱이 실제 평가하는 종목(당일 워치리스트 + 보유)만.
-        // 유니버스 전체(수십 종목)를 매시 수집하면 KIS 초당 한도(EGW00215) 초과로 틱이 막힘.
-        const day = tradingDateKey(now);
-        const wl = await c.db.select({ sym: schema.watchlist.symbol }).from(schema.watchlist).where(eq(schema.watchlist.date, day));
-        const held = (await c.repos.positions.all()).map((p) => p.symbol);
-        const targets = [...new Set([...wl.map((r) => r.sym), ...held])];
-        const specs = (targets.length ? targets : c.config.defaultUniverse).map((symbol) => ({ symbol, market: 'KS' as const }));
+        // 틱 전 직전 시간봉 수집(장중 신선도) — 틱이 실제 평가하는 종목(워치리스트+보유)만, 최대 ~20종목.
+        // 원칙: 수집은 best-effort. 절대 틱을 막지 않는다(레이트리밋으로 hang 시 타임아웃 후 그냥 진행).
+        //  - 74 유니버스 폴백 금지(레이트리밋 폭탄). 대상 없으면 수집 스킵.
         try {
-          await c.collector.accumulateKisHourly(specs);
+          const day = tradingDateKey(now);
+          const wl = await c.db.select({ sym: schema.watchlist.symbol }).from(schema.watchlist).where(eq(schema.watchlist.date, day));
+          const held = (await c.repos.positions.all()).map((p) => p.symbol);
+          const targets = [...new Set([...wl.map((r) => r.sym), ...held])].slice(0, 20);
+          if (targets.length) {
+            const specs = targets.map((symbol) => ({ symbol, market: 'KS' as const }));
+            await Promise.race([
+              c.collector.accumulateKisHourly(specs),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('pre-tick collect timeout')), 25_000)),
+            ]);
+          }
         } catch (err) {
-          logger.error({ err }, 'pre-tick hourly collect failed — stale 봉으로 진행될 수 있음');
+          logger.warn({ err: err instanceof Error ? err.message : err }, 'pre-tick hourly collect skipped/timeout — 기존 봉으로 틱 진행');
         }
+        // 수집 성공/실패/타임아웃과 무관하게 틱은 항상 실행.
         await runLiveTick(tickDeps, now);
       },
       // 매분: 인트라아워 스탑 가드(틱 사이 손절 방어).
