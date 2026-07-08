@@ -4,6 +4,7 @@
  */
 import type Redis from 'ioredis';
 import { KIS_DOMAIN } from './constants.js';
+import { fetchWithTimeout } from './fetch.js';
 import { TokenResponse } from './schemas.js';
 import type { KisCredentials } from '../../config/index.js';
 import type { Logger } from '../../logger.js';
@@ -92,7 +93,7 @@ export class KisTokenManager {
   }
 
   private async issue(): Promise<CachedToken> {
-    const res = await fetch(`${KIS_DOMAIN[this.creds.env]}/oauth2/tokenP`, {
+    const res = await fetchWithTimeout(`${KIS_DOMAIN[this.creds.env]}/oauth2/tokenP`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

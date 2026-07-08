@@ -3,6 +3,7 @@
  * 모의투자 계좌는 제한이 더 낮으므로(10장-6) 보수적 스로틀.
  */
 import Bottleneck from 'bottleneck';
+import { fetchWithTimeout } from './fetch.js';
 import { KIS_DOMAIN } from './constants.js';
 import { KisAuthError, KisError, KisRateLimitError } from './errors.js';
 import type { KisTokenManager } from './token.js';
@@ -74,20 +75,15 @@ export class KisClient {
       if (req.hashBody) headers.hashkey = await this.hashkey(req.body);
     }
 
-    // fetch 타임아웃(AbortController): KIS 연결이 멈추면(hang) await 가 영원히 안 끝나
-    // Bottleneck(동시 1) 이 막혀 뒤의 모든 호출(틱 포함)이 정지한다. 8초 초과 시 중단 → 재시도.
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8_000);
+    // 타임아웃 fetch: 멈춘 연결이 Bottleneck(동시 1)을 막아 모든 호출(틱 포함)을 정지시키는 것 방지.
     let res: Response;
     try {
-      res = await fetch(url, { method: req.method, headers, body, signal: ctrl.signal });
+      res = await fetchWithTimeout(url, { method: req.method, headers, body });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new KisRateLimitError(`KIS ${req.trId} fetch timeout(8s)`, 'TIMEOUT'); // 재시도 대상
+        throw new KisRateLimitError(`KIS ${req.trId} fetch timeout`, 'TIMEOUT'); // 재시도 대상
       }
       throw err;
-    } finally {
-      clearTimeout(timer);
     }
     const text = await res.text();
 
@@ -115,9 +111,9 @@ export class KisClient {
     return json as T;
   }
 
-  /** 주문 body 의 hashkey 발급. */
+  /** 주문 body 의 hashkey 발급. (타임아웃 필수 — 주문 시 여기서 hang 하면 워커 프리즈) */
   private async hashkey(body: Record<string, unknown>): Promise<string> {
-    const res = await fetch(`${this.domain}/uapi/hashkey`, {
+    const res = await fetchWithTimeout(`${this.domain}/uapi/hashkey`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json; charset=utf-8',
