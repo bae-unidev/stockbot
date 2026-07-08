@@ -28,35 +28,33 @@ export class Scheduler {
   ) {}
 
   start(): void {
-    // 매시간 정각(09~15시 KST). 휴장/장외면 스킵.
+    // 단일 2분 크론이 매시 틱 + 스탑가드를 함께 구동(09~15시 KST).
+    // 매시 틱을 별도 '0 9-15' 크론에 의존하면, 워커가 :00 순간에 프리즈(레이트리밋/네트워크)되면
+    // 그 시간 틱을 통째로 놓친다. 대신 "이번 시(時)의 틱을 아직 안 했으면 지금 실행"(catch-up):
+    // :00 을 놓쳐도 :02/:04/:06 등 다음 fire 에서 따라잡는다.
+    let lastHourlyKey = '';
+    const kstHourKey = (ts: number) => {
+      const k = new Date(ts + 9 * 3600_000); // KST=UTC+9
+      return `${k.getUTCFullYear()}-${k.getUTCMonth()}-${k.getUTCDate()}-${k.getUTCHours()}`;
+    };
     this.tasks.push(
       cron.schedule(
-        '0 9-15 * * 1-5',
+        '*/2 9-15 * * 1-5',
         () => {
           const now = Date.now();
-          const open = isMarketOpen(now);
-          this.logger.info({ open }, 'hourly cron fired'); // 관측: 크론이 실제 fire되는지
-          if (!open) return;
-          void this.hooks.onHourlyTick(now).catch((err) => this.logger.error({ err }, 'hourly tick failed'));
+          if (!isMarketOpen(now)) return;
+          const hourKey = kstHourKey(now);
+          if (hourKey !== lastHourlyKey) {
+            lastHourlyKey = hourKey;
+            this.logger.info({ hourKey }, 'hourly tick 실행(catch-up)');
+            void this.hooks.onHourlyTick(now).catch((err) => this.logger.error({ err }, 'hourly tick failed'));
+          } else if (this.hooks.onStopGuard) {
+            void this.hooks.onStopGuard(now).catch((err) => this.logger.error({ err }, 'stop guard failed'));
+          }
         },
         { timezone: 'Asia/Seoul' },
       ),
     );
-
-    // 매분 스탑 가드(09~15시 KST). 휴장/장외면 스킵.
-    if (this.hooks.onStopGuard) {
-      this.tasks.push(
-        cron.schedule(
-          '*/2 9-15 * * 1-5', // 2분마다(매분→2분: KIS 초당 한도 압박 완화)
-          () => {
-            const now = Date.now();
-            if (!isMarketOpen(now)) return;
-            void this.hooks.onStopGuard!(now).catch((err) => this.logger.error({ err }, 'stop guard failed'));
-          },
-          { timezone: 'Asia/Seoul' },
-        ),
-      );
-    }
 
     if (this.hooks.onPreOpen) {
       this.tasks.push(
