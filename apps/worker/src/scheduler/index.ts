@@ -34,10 +34,9 @@ export class Scheduler {
         '0 9-15 * * 1-5',
         () => {
           const now = Date.now();
-          if (!isMarketOpen(now)) {
-            this.logger.debug('hourly tick skipped (market closed/holiday)');
-            return;
-          }
+          const open = isMarketOpen(now);
+          this.logger.info({ open }, 'hourly cron fired'); // 관측: 크론이 실제 fire되는지
+          if (!open) return;
           void this.hooks.onHourlyTick(now).catch((err) => this.logger.error({ err }, 'hourly tick failed'));
         },
         { timezone: 'Asia/Seoul' },

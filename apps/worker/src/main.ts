@@ -92,6 +92,7 @@ async function main() {
   const scheduler = new Scheduler(
     {
       onHourlyTick: async (now) => {
+        logger.info('onHourlyTick: 시작(사전수집→틱)'); // 관측
         // 틱 전 직전 시간봉 수집(장중 신선도) — 틱이 실제 평가하는 종목(워치리스트+보유)만, 최대 ~20종목.
         // 원칙: 수집은 best-effort. 절대 틱을 막지 않는다(레이트리밋으로 hang 시 타임아웃 후 그냥 진행).
         //  - 74 유니버스 폴백 금지(레이트리밋 폭탄). 대상 없으면 수집 스킵.
@@ -111,6 +112,7 @@ async function main() {
           logger.warn({ err: err instanceof Error ? err.message : err }, 'pre-tick hourly collect skipped/timeout — 기존 봉으로 틱 진행');
         }
         // 수집 성공/실패/타임아웃과 무관하게 틱은 항상 실행.
+        logger.info('onHourlyTick: runLiveTick 호출'); // 관측
         await runLiveTick(tickDeps, now);
       },
       // 매분: 인트라아워 스탑 가드(틱 사이 손절 방어).
