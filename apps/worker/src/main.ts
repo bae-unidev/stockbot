@@ -81,14 +81,6 @@ async function main() {
     logger.error({ err }, 'startup reconciliation failed — 계속 진행하나 첫 틱에서 재시도됨');
   }
 
-  // 부팅 자가복구: 재시작/배포가 개장 후에 일어나도 당일 데이터·워치리스트를 보장(실패해도 계속).
-  try {
-    await bootstrapToday(c, Date.now());
-    logger.info('startup bootstrap complete');
-  } catch (err) {
-    logger.error({ err }, 'startup bootstrap failed — 계속 진행(다음 크론에서 보정)');
-  }
-
   const scheduler = new Scheduler(
     {
       onHourlyTick: async (now) => {
@@ -144,11 +136,16 @@ async function main() {
     logger,
   );
   scheduler.start();
+  logger.info({ universe: c.config.defaultUniverse, indexSymbol: c.config.indexSymbol }, 'stockbot worker running (live/paper). Ctrl+C to stop.');
+
+  // 부팅 자가복구는 스케줄러 기동 후 백그라운드로(무거운 74종목 수집이 스케줄러 기동을 막지 않게).
+  // 이게 await 였을 때 부팅이 ~30분 걸려 그동안 매시 틱을 다 놓쳤음.
+  void bootstrapToday(c, Date.now())
+    .then(() => logger.info('startup bootstrap complete'))
+    .catch((err) => logger.error({ err }, 'startup bootstrap failed — 다음 크론에서 보정'));
 
   // 부팅 직후 대기 중이던 제어 명령 즉시 처리(다운타임 중 눌린 버튼).
   if (c.control) await c.control.processPending().catch((err) => logger.error({ err }, 'startup control poll failed'));
-
-  logger.info({ universe: c.config.defaultUniverse, indexSymbol: c.config.indexSymbol }, 'stockbot worker running (live/paper). Ctrl+C to stop.');
 
   const stop = async () => {
     logger.info('shutting down…');
