@@ -15,6 +15,9 @@ const EnvSchema = z.object({
   MOCK_KIS_API_SECRET: z.string().optional(),
   KIS_API_KEY: z.string().optional(),
   KIS_API_SECRET: z.string().optional(),
+  KIS_ACCOUNT: z.string().optional(), // 실거래 계좌 (8자리-2자리)
+  // 실거래 명시적 동의 게이트. 'true' 가 아니면 KIS_ENV=prod 를 거부(실주문 안전장치).
+  ALLOW_REAL_MONEY: z.string().optional(),
 
   DATABASE_URL: z.string().default('postgresql://stockbot:stockbot@localhost:5432/stockbot'),
   REDIS_URL: z.string().default('redis://localhost:6379'),
@@ -69,15 +72,27 @@ export interface AppConfig {
 export function loadConfig(): AppConfig {
   const env = EnvSchema.parse(process.env);
 
-  // 3장 안전 제약: 1차는 paper 전용. prod 선택 시 명시적으로 막는다.
-  if (env.KIS_ENV === 'prod') {
+  // 안전 제약(3장): 실거래(prod)는 되돌리기 어려운 실주문 → 명시적 동의(ALLOW_REAL_MONEY=true) 없이는 거부.
+  // 기본값은 paper. prod 활성화는 의도적 2중 설정(KIS_ENV=prod + ALLOW_REAL_MONEY=true)을 요구한다.
+  if (env.KIS_ENV === 'prod' && env.ALLOW_REAL_MONEY !== 'true') {
     throw new Error(
-      'KIS_ENV=prod 는 1차 비범위입니다(실거래 금지). 모의투자(paper)로만 동작시키세요.',
+      'KIS_ENV=prod 는 실거래입니다. 실주문을 의도한 경우에만 ALLOW_REAL_MONEY=true 를 함께 설정하세요. (모의투자는 KIS_ENV=paper)',
     );
   }
 
   let kis: KisCredentials | null = null;
-  if (env.MOCK_KIS_API_KEY && env.MOCK_KIS_API_SECRET && env.MOCK_ACCOUNT) {
+  if (env.KIS_ENV === 'prod') {
+    if (!(env.KIS_API_KEY && env.KIS_API_SECRET && env.KIS_ACCOUNT)) {
+      throw new Error('KIS_ENV=prod 인데 실거래 자격증명이 없습니다(KIS_API_KEY/KIS_API_SECRET/KIS_ACCOUNT).');
+    }
+    kis = {
+      appKey: env.KIS_API_KEY,
+      appSecret: env.KIS_API_SECRET,
+      account: env.KIS_ACCOUNT,
+      htsId: env.HTS_ID,
+      env: 'prod',
+    };
+  } else if (env.MOCK_KIS_API_KEY && env.MOCK_KIS_API_SECRET && env.MOCK_ACCOUNT) {
     kis = {
       appKey: env.MOCK_KIS_API_KEY,
       appSecret: env.MOCK_KIS_API_SECRET,
