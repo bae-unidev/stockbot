@@ -57,7 +57,7 @@ raw→도메인 변환 흐름: `KIS raw 응답 → zod 파싱(schemas.ts) → �
 
 - **레이어1 워치리스트**(`buildWatchlist`, 하루 1회): 유동성 필터 → 모멘텀/밸류/퀄리티/event_score z-score 가중합 → 상위 N.
 - **레이어2 국면 필터**(매시간): 지수 200일선 위(`INDEX_SYMBOL`=069500, 일봉 적재 시) + 종목 VWAP·EMA50 위 + 부정이벤트 veto.
-- **레이어3 진입/청산**(매시간): 진입 3종(RSI(2)<15 눌림 / 추세 눌림 / 코어 stay-invested). 청산 우선순위 = 최대보유 14일 → 하드스탑 −7% → 샹들리에 ATR 트레일링(고점−3×ATR) → 추세이탈(EMA50 아래). `liquidateAtClose=false`(EOD 청산 비활성).
+- **레이어3 진입/청산**(매시간): 진입 3종(RSI(2)<15 눌림 / 추세 눌림 / 코어 stay-invested). 청산 우선순위 = 최대보유 30일 → 하드스탑 −7% → 샹들리에 ATR 트레일링(고점−3×ATR) → 추세이탈(EMA50 아래, 평가손실 포지션만). `liquidateAtClose=false`(EOD 청산 비활성).
 
 엔진 입력 = (시각, 워치리스트, 국면, marks, config) + 포트 조회. 출력 = `OrderIntent[]` (부수효과 없음).
 하루 동안의 스케줄·틱 흐름은 [LIFECYCLE](./LIFECYCLE.md) 참고.

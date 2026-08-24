@@ -4,7 +4,7 @@
  */
 import '../bootstrap.js';
 import { buildContainer, logger } from '../container.js';
-import { runBacktest, type BacktestResult } from '../backtest/runner.js';
+import { LIVE_INTRA_BAR_STOPS, runBacktest, type BacktestResult } from '../backtest/runner.js';
 import { saveBacktest } from '../backtest/persist.js';
 import { loadBars, loadEventScores } from '../backtest/data.js';
 
@@ -48,7 +48,8 @@ async function main() {
   const allSymbols = [...new Set(bars.map((b) => b.symbol))];
   const toTs = bars[bars.length - 1]!.ts;
   const eventScores = await loadEventScores(c.db, allSymbols, toTs);
-  const base = { bars, indexDailyBars, config: { ...c.config.strategy, minTradingValue: 0 }, initialCash: cash, eventScores };
+  // 라이브와 동일한 봉 내부 스탑(하드스탑)을 모델링 — 백테스트 낙관 편향 방지.
+  const base = { bars, indexDailyBars, config: { ...c.config.strategy, minTradingValue: 0 }, initialCash: cash, eventScores, intraBarStops: LIVE_INTRA_BAR_STOPS };
 
   if (compareEvents) {
     // event_score 포함 vs 미포함 A/B (15장 완료기준).

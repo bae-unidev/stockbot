@@ -3,6 +3,7 @@
  * canonical 봉/이벤트를 가상 시계 순서로 엔진에 주입 → 체결 시뮬 → 결과(자산곡선·지표) 산출.
  */
 import {
+  atr,
   runStrategyTick,
   sma,
   type Bar,
@@ -25,6 +26,27 @@ class SimEventData implements EventDataPort {
   }
 }
 
+/**
+ * 인트라아워(봉 내부) 스탑 시뮬레이션 — 라이브 stop-guard(분 단위 현재가 감시)에 대응.
+ * 이게 없으면 백테스트는 시간봉 '종가'만 보므로, 라이브에서 실제 청산 대부분을 만드는
+ * 봉 내부 스탑 발동을 전혀 모델링하지 못한다(백테스트 낙관 편향).
+ */
+export interface IntraBarStops {
+  /** 트레일링 앵커를 봉 고가로 갱신(라이브 = 분단위 현재가와 동일 효과). false면 종가만. */
+  hwmFromHigh: boolean;
+  /** 봉 내부 트레일링 판정 방식. 'off'면 봉 내부에서는 트레일링을 보지 않는다. */
+  trailing: 'off' | 'fixed' | 'atr';
+  /** 봉 내부 하드스탑 판정. */
+  hardStop: boolean;
+}
+
+/**
+ * 라이브 stop-guard(apps/worker/src/tick/stop-guard.ts)와 동일한 봉 내부 스탑 설정.
+ * 백테스트가 라이브와 같은 청산 메커니즘을 보게 하려면 이 값을 쓴다 —
+ * 안 쓰면 봉 내부 스탑을 무시해 결과가 낙관 편향된다.
+ */
+export const LIVE_INTRA_BAR_STOPS: IntraBarStops = { hwmFromHigh: true, trailing: 'off', hardStop: true };
+
 export interface BacktestInput {
   bars: Bar[]; // canonical 60m (+ 선택적으로 종목 일봉)
   eventScores?: EventScore[];
@@ -37,6 +59,8 @@ export interface BacktestInput {
   indexDailyBars?: Bar[];
   /** 날짜별 워치리스트 결정. 기본: 봉에 존재하는 전 종목. */
   watchlistFor?: (asOf: number, allSymbols: Symbol[]) => Symbol[];
+  /** 라이브 stop-guard 모델링. 미지정이면 봉 내부 스탑 없음(시간봉 종가 기준만). */
+  intraBarStops?: IntraBarStops;
   fromTs?: number;
   toTs?: number;
 }
@@ -115,6 +139,31 @@ export async function runBacktest(input: BacktestInput): Promise<BacktestResult>
     return ans >= 0 ? arr[ans]!.close : undefined;
   };
 
+  // 봉 내부 스탑 시뮬레이션용: 종목별 60m 봉(시간순) + ts 이하 마지막 봉 인덱스.
+  const barsBySym = new Map<Symbol, Bar[]>();
+  for (const b of input.bars) {
+    if (b.timeframe !== '60m') continue;
+    const arr = barsBySym.get(b.symbol) ?? [];
+    arr.push(b);
+    barsBySym.set(b.symbol, arr);
+  }
+  for (const arr of barsBySym.values()) arr.sort((a, b) => a.ts - b.ts);
+  const barIndexAt = (sym: Symbol, asOf: number): number => {
+    const arr = barsBySym.get(sym);
+    if (!arr || arr.length === 0) return -1;
+    let lo = 0;
+    let hi = arr.length - 1;
+    let ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (arr[mid]!.ts <= asOf) {
+        ans = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return ans;
+  };
+
   let timeline = replay.timeline('60m');
   if (input.fromTs != null) timeline = timeline.filter((t) => t >= input.fromTs!);
   if (input.toTs != null) timeline = timeline.filter((t) => t <= input.toTs!);
@@ -134,14 +183,68 @@ export async function runBacktest(input: BacktestInput): Promise<BacktestResult>
     const day = tradingDateKey(ts);
     if (!regimeByDay.has(day)) regimeByDay.set(day, indexAbove200dma(input.indexDailyBars, ts));
 
-    // 트레일링 앵커 갱신: 보유 종목 현재가로 high-water-mark 상향(scaledOut 보존).
+    // ── 트레일링 앵커 갱신 + 인트라아워 스탑 가드 시뮬(라이브 stop-guard 대응) ──
+    // 엔진 틱보다 먼저 판정한다(라이브도 분단위 가드가 시간봉 틱보다 먼저 잡는다).
+    const guard = input.intraBarStops;
+    const cfg = input.config;
+    for (const p of (await broker.getPortfolio(ts)).positions) {
+      const i = barIndexAt(p.symbol, ts);
+      const arr = barsBySym.get(p.symbol);
+      const bar = i >= 0 && arr![i]!.ts === ts ? arr![i]! : undefined;
+      const prev = marks[p.symbol]?.highWaterMark ?? p.avgPrice;
+      // 앵커: 라이브 가드는 분단위 현재가를 보므로 봉 고가와 사실상 같다. hwmFromHigh=false면 종가만.
+      const anchorPx = guard?.hwmFromHigh && bar ? bar.high : priceAt(ts)(p.symbol) ?? prev;
+      const hwm = Math.max(prev, anchorPx);
+      marks[p.symbol] = { highWaterMark: hwm, scaledOut: marks[p.symbol]?.scaledOut, entryTs: marks[p.symbol]?.entryTs };
+      if (!guard || !bar) continue;
+
+      // 가격이 내려가면 더 높은 스탑이 먼저 닿는다 → 하드/트레일링 중 높은 쪽으로 판정.
+      let stop = -Infinity;
+      let why = '';
+      if (guard.hardStop) {
+        const hs = p.avgPrice * (1 - cfg.hardStopPct);
+        if (hs > stop) {
+          stop = hs;
+          why = `intra-bar hard stop ${hs.toFixed(0)}`;
+        }
+      }
+      if (guard.trailing !== 'off') {
+        let t = hwm * (1 - cfg.trailingStopPct);
+        if (guard.trailing === 'atr') {
+          const a = atr(arr!.slice(Math.max(0, i - cfg.atrPeriod - 1), i + 1), cfg.atrPeriod);
+          if (a != null && a > 0) t = hwm - cfg.trailingAtrMult * a;
+        }
+        if (t > stop) {
+          stop = t;
+          why = `intra-bar trailing stop ${t.toFixed(0)}`;
+        }
+      }
+      if (stop === -Infinity || bar.low > stop) continue;
+
+      // 갭하락으로 시가가 이미 스탑 아래면 시가 체결(낙관 편향 방지).
+      const fillPx = Math.min(stop, bar.open);
+      const filled = await broker.submit({
+        clientOrderId: `bt-guard-${ts}-${p.symbol}`,
+        symbol: p.symbol,
+        side: 'sell',
+        type: 'limit',
+        quantity: p.quantity,
+        limitPrice: fillPx,
+        status: 'new',
+        filledQuantity: 0,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      if (filled.status === 'filled') {
+        const lastTrade = broker.trades[broker.trades.length - 1];
+        if (lastTrade) lastTrade.reason = why;
+        delete marks[p.symbol];
+        cooldownUntil[p.symbol] = ts + cfg.reentryCooldownBars * 3600_000;
+      }
+    }
+
     const pf = await broker.getPortfolio(ts);
     const heldQty = new Map(pf.positions.map((p) => [p.symbol, p.quantity]));
-    for (const p of pf.positions) {
-      const price = priceAt(ts)(p.symbol);
-      const prev = marks[p.symbol]?.highWaterMark ?? p.avgPrice;
-      marks[p.symbol] = { highWaterMark: Math.max(prev, price ?? prev), scaledOut: marks[p.symbol]?.scaledOut, entryTs: marks[p.symbol]?.entryTs };
-    }
 
     const decision = await runStrategyTick(ctx, {
       asOf: ts,

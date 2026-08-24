@@ -5,7 +5,7 @@
  */
 import '../bootstrap.js';
 import { buildContainer, logger } from '../container.js';
-import { runBacktest } from '../backtest/runner.js';
+import { LIVE_INTRA_BAR_STOPS, runBacktest } from '../backtest/runner.js';
 import { loadBars, loadEventScores } from '../backtest/data.js';
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from '@stockbot/core';
 
@@ -43,7 +43,7 @@ async function main() {
 
   console.log(`\n=== ${param} 비교 (현재값 ${current}, 다른 파라미터 고정) ===`);
   for (const v of values) {
-    const r = await runBacktest({ bars, indexDailyBars, eventScores, config: { ...base, [param]: v }, initialCash: 10_000_000 });
+    const r = await runBacktest({ bars, indexDailyBars, eventScores, config: { ...base, [param]: v }, initialCash: 10_000_000, intraBarStops: LIVE_INTRA_BAR_STOPS });
     const m = r.metrics;
     const mark = v === current ? ' ← 현재' : '';
     console.log(`  ${param}=${v}\t수익률 ${(m.totalReturn * 100).toFixed(2)}%  MDD ${(m.maxDrawdown * 100).toFixed(2)}%  샤프 ${m.sharpe.toFixed(2)}  (${m.numTrades}거래)${mark}`);

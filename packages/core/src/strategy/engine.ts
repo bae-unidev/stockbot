@@ -125,8 +125,26 @@ export async function runStrategyTick(
       intents.push({ symbol: pos.symbol, side: 'sell', type: 'market', quantity: pos.quantity, reason: `trailing stop ${trailStop.toFixed(0)} (hwm ${hwm.toFixed(0)})` });
       diagnostics[pos.symbol] = 'exit:trailing';
     } else if (stayInvested) {
-      // 추세이탈 청산: 가격이 20-EMA 아래로 내려오면 청산(그 외엔 보유 = 과매매 방지).
-      if (e != null && last < e) {
+      // 추세이탈 청산: 가격이 EMA 아래로 내려오면 청산(그 외엔 보유 = 과매매 방지).
+      // 확인 봉 수(trendBreakConfirmBars)만큼 연속으로 EMA×(1−buffer) 아래여야 인정 —
+      // 1봉만 보고 털면 노이즈 휩쏘로 승자를 잃는다(라이브 매매이력에서 확인된 손실원).
+      const confirmBars = config.trendBreakConfirmBars;
+      let trendBroken = false;
+      if (confirmBars > 0 && e != null) {
+        const eseq = emaSeries(closes, config.emaPeriod);
+        trendBroken = true;
+        for (let k = 0; k < confirmBars; k++) {
+          const c = closes[closes.length - 1 - k];
+          const ev = eseq[eseq.length - 1 - k];
+          if (c == null || ev == null || !(c < ev * (1 - config.trendBreakBufferPct))) {
+            trendBroken = false;
+            break;
+          }
+        }
+      }
+      // 이익 중인 포지션은 트레일링이 지킨다 → 옵션 켜지면 손실 포지션에만 추세이탈 청산 적용.
+      const losing = last < entryPrice;
+      if (trendBroken && e != null && (!config.trendBreakOnlyWhenLosing || losing)) {
         intents.push({ symbol: pos.symbol, side: 'sell', type: 'market', quantity: pos.quantity, reason: `trend-break (price<${e.toFixed(0)} ema${config.emaPeriod})` });
         diagnostics[pos.symbol] = 'exit:trend-break';
       } else {

@@ -206,6 +206,46 @@ describe('runStrategyTick', () => {
     expect(decision.intents.find((i) => i.side === 'sell')!.quantity).toBe(10);
   });
 
+  // 추세이탈(가격<EMA) 청산: 손실 포지션만 털고, 이익 포지션은 트레일링에 맡긴다.
+  // 스탑을 격리하려고 트레일링/하드스탑은 사실상 비활성(90%)으로 둔다.
+  const trendBreakSetup = () => {
+    const base = 700 * HOUR;
+    const up = Array.from({ length: 40 }, (_, i) => 100 + i * 1.5); // 100 → 158.5
+    const down = Array.from({ length: 20 }, (_, i) => 158.5 - i * 2); // 158.5 → 120.5
+    const closes = [...up, ...down];
+    const bars = closes.map((c, i) => bar('A', base + i * HOUR, c));
+    return { bars, now: base + (closes.length - 1) * HOUR, last: closes[closes.length - 1]! };
+  };
+  const trendBreakCfg = { ...DEFAULT_STRATEGY_CONFIG, trailingMode: 'fixed' as const, trailingStopPct: 0.9, hardStopPct: 0.9, maxHoldDays: 0 };
+
+  it('exits a losing position on a trend break (price < EMA)', async () => {
+    const { bars, now, last } = trendBreakSetup();
+    const avgPrice = last + 20; // 평가손실
+    const ctx = makeCtx({ now, bars: { A: bars }, portfolio: { cash: 0, positions: [{ symbol: 'A', quantity: 10, avgPrice }] } });
+    const decision = await runStrategyTick(ctx, {
+      asOf: now, watchlist: [], indexAbove200dma: true, minutesToClose: 240,
+      marks: { A: { highWaterMark: 158.5 } },
+      config: { ...trendBreakCfg, trendBreakOnlyWhenLosing: true },
+    });
+    expect(decision.diagnostics['A']).toBe('exit:trend-break');
+  });
+
+  it('holds a winning position through a trend break (trailing stop guards it)', async () => {
+    const { bars, now, last } = trendBreakSetup();
+    const avgPrice = last - 20; // 평가이익
+    const ctx = makeCtx({ now, bars: { A: bars }, portfolio: { cash: 0, positions: [{ symbol: 'A', quantity: 10, avgPrice }] } });
+    const input = {
+      asOf: now, watchlist: [] as Symbol[], indexAbove200dma: true, minutesToClose: 240,
+      marks: { A: { highWaterMark: 158.5 } },
+    };
+    const held = await runStrategyTick(ctx, { ...input, config: { ...trendBreakCfg, trendBreakOnlyWhenLosing: true } });
+    expect(held.intents).toHaveLength(0);
+    expect(held.diagnostics['A']).toContain('hold');
+    // 플래그를 끄면 같은 상황에서 이익 포지션도 털린다(플래그가 유일한 차이임을 고정).
+    const dumped = await runStrategyTick(ctx, { ...input, config: { ...trendBreakCfg, trendBreakOnlyWhenLosing: false } });
+    expect(dumped.diagnostics['A']).toBe('exit:trend-break');
+  });
+
   it('blocks re-entry while a symbol is in cooldown', async () => {
     const base = 100 * HOUR;
     const bars = Array.from({ length: 30 }, (_, i) => bar('A', base + i * HOUR, 100 - i));

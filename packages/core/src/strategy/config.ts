@@ -11,6 +11,18 @@ export interface StrategyConfig {
   liquidateMinutesBeforeClose: number; // 장 마감 N분 전 전량 청산
   liquidateAtClose: boolean; // false면 마감 전량청산 비활성(오버나잇 보유 허용)
   maxHoldDays: number; // 0=무제한. N>0이면 N일 이상 보유한 종목은 시간기반 강제 청산
+  /**
+   * 추세이탈(가격<EMA) 청산 확인 봉 수. 0=비활성, 1=직전 봉 1개만 보면 즉시 청산,
+   * N>1=최근 N봉이 연속으로 EMA 아래일 때만 청산(1봉 휩쏘 방지).
+   */
+  trendBreakConfirmBars: number;
+  /** 추세이탈 판정 버퍼: 종가가 EMA×(1−buffer) 아래여야 이탈로 인정. 0=EMA 그대로. */
+  trendBreakBufferPct: number;
+  /**
+   * true면 추세이탈 청산을 '평가손실 중인 포지션'에만 적용한다.
+   * 이익 중인 포지션은 트레일링 스탑이 이미 지키므로, EMA 이탈로 승자를 먼저 털지 않는다.
+   */
+  trendBreakOnlyWhenLosing: boolean;
 
   // 코어 stay-invested(다른 알고리즘): 투자비중이 이 값 미만이면 국면통과 종목으로 메움.
   minInvestedRatio: number; // 0.5 = 자산의 최소 50%를 항상 투자
@@ -62,7 +74,16 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   trailingAtrMult: 3.0, // 고점 − 3×ATR
   liquidateMinutesBeforeClose: 30,
   liquidateAtClose: false, // 오버나잇 보유 허용(stay-invested 와 충돌 방지)
-  maxHoldDays: 14, // 보유일수 스윕 결과 최고수익(21.3%). 0=무제한 (캡 15일 이하 중 최적)
+  // 보유일수: 봉 내부 스탑을 모델링한 재스윕에서 30일이 전·후반 양 구간 모두 14일보다 우수
+  //   (전반 −1.5%→+6.8%, 후반 +41.7%→+44.7%). 14일은 트레일링이 살릴 승자를 시간으로 잘라냈다.
+  maxHoldDays: 30, // 0=무제한. 30일은 '방치 포지션 청소' 안전판 역할만 남긴다.
+  // 추세이탈 청산은 '즉시·버퍼없음'이 최적. 확인봉 2~3봉 또는 1~2% 버퍼로 완화하면
+  //   오히려 크게 악화(62.7% → 24.9%/36.3%) — 늦게 털면 손실이 커진다.
+  trendBreakConfirmBars: 1,
+  trendBreakBufferPct: 0,
+  // 단, 이익 중인 포지션은 트레일링이 지키게 두고 추세이탈로 털지 않는다.
+  //   전·후반 양 구간 개선(전반 샤프 0.72→0.98·MDD 9.7→7.8, 후반 1.83→1.89).
+  trendBreakOnlyWhenLosing: true,
   minInvestedRatio: 0.7, // 최소 70% 투자(현금 30%) — 샤프 1.03 로 최적
 
   pullbackEntry: true,

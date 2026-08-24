@@ -60,7 +60,7 @@ export default function StrategyPage() {
         <br />
         <b>③ 코어(항상 투자):</b> 돈이 너무 놀고 있으면(투자 비중 <b>{pct(C.minInvestedRatio)} 미만</b>) 신호등 통과한 강한 종목으로 비중을 채워 <b>최소 {pct(C.minInvestedRatio)}는 늘 투자</b>(현금 {pct(1 - C.minInvestedRatio)} 이하).
         <div style={{ marginTop: 8 }}>
-          <b>팔 때</b>: <Term t="하드 스탑로스">하드 스탑로스</Term>(산 값 −7%) · <Term t="트레일링 스탑">트레일링 스탑</Term>(고점 −5%) · 추세 이탈(20시간 평균선 아래로) 중 먼저 닿는 것.
+          <b>팔 때</b>: <Term t="하드 스탑로스">하드 스탑로스</Term>(산 값 {pct(C.hardStopPct)}) · <Term t="트레일링 스탑">트레일링 스탑</Term>(고점 − {C.trailingAtrMult}×ATR) · 추세 이탈({C.emaPeriod}시간 평균선 아래로, <b>평가손실일 때만</b>) 중 먼저 닿는 것.
         </div>
       </Card>
 
@@ -68,9 +68,9 @@ export default function StrategyPage() {
         이 봇엔 <b>&quot;+X% 오르면 무조건 판다&quot;(<Term t="익절(take-profit)">고정 익절</Term>) 규칙이 없습니다.</b> 대신 아래 넷 중 <b>먼저 닿는 것</b>으로 팔아요:
         <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
           <li><b><Term t="트레일링 스탑">트레일링 스탑</Term></b>: <Term t="고점">고점</Term> − 3×ATR(샹들리에) 아래로 빠지면 매도 — 변동성 큰 종목은 넓게, 잔잔한 종목은 좁게(낙폭 방어)</li>
-          <li><b>추세이탈</b>: 가격이 20시간 평균선(EMA20) 아래로 내려오면</li>
-          <li><b><Term t="하드 스탑로스">하드 스탑로스</Term></b>: 산 값 −7%</li>
-          <li><b>최대 보유일수</b>: 14일 경과</li>
+          <li><b>추세이탈</b>: 가격이 {C.emaPeriod}시간 평균선(EMA{C.emaPeriod}) 아래로 내려오면 — 단 <b>평가손실 중인 종목만</b>. 이익 중이면 트레일링이 지키게 두고 안 팝니다(승자 조기청산 방지)</li>
+          <li><b><Term t="하드 스탑로스">하드 스탑로스</Term></b>: 산 값 {pct(C.hardStopPct)}</li>
+          <li><b>최대 보유일수</b>: {C.maxHoldDays}일 경과</li>
         </ul>
         <div style={{ marginTop: 6 }}>
           <b>여기서 &quot;고점&quot;은 52주 고점이 아니라</b> 그 종목을 <u>산 뒤부터 본 최고가</u>(보유하는 동안만)예요. 팔고 다시 사면 새로 시작합니다.
@@ -88,14 +88,47 @@ export default function StrategyPage() {
           </table>
           → "조금 오르면 바로 판다(+5% 익절)"는 오히려 <b>3% 트레일링과 같은 이유로 수익을 깎습니다.</b> 그래서 고정 익절은 안 씁니다.
           <div style={{ marginTop: 6 }}>
-            <b>최종 선택: 고정%가 아니라 <Term t="트레일링 스탑">샹들리에 ATR(고점 − 3×ATR)</Term>.</b> 수익은 약간 낮아도(+11%→+7.5%) <b>낙폭(MDD)을 25.8%→17.9%로 크게 줄여</b>서 낙폭 방어를 우선했습니다. 변동성 큰 종목엔 넓게·잔잔한 종목엔 좁게 손절이 자동 조절돼요. (`pnpm chandeliersweep`로 재확인)
+            <b>최종 선택: 고정%가 아니라 <Term t="트레일링 스탑">샹들리에 ATR(고점 − 3×ATR)</Term>.</b> 수익은 약간 낮아도(+11%→+7.5%) <b>낙폭(MDD)을 25.8%→17.9%로 크게 줄여</b>서 낙폭 방어를 우선했습니다. 변동성 큰 종목엔 넓게·잔잔한 종목엔 좁게 손절이 자동 조절돼요. (`pnpm paramsweep trailingAtrMult 2 3 4 5`로 재확인)
+          </div>
+        </div>
+      </Card>
+
+      <Card title="2026-08 업데이트 — 모의투자 매매이력에서 찾은 손익 개선 3가지 🔧">
+        모의투자 2개월(79건 왕복거래) 실제 체결을 뜯어보니, <b>백테스트에는 없던 청산 경로가 수익을 깎고 있었습니다.</b>
+        <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
+          <li>
+            <b>① 분단위 트레일링 스탑 제거(가장 큰 원인)</b> — 매분 도는 인트라아워 가드가 <u>시간봉 엔진과 다른 규칙</u>(고점 −5% 고정)으로
+            트레일링을 판정해 봉 내부 노이즈마다 승자를 털었습니다. 실측: 가드 트레일링 청산 <b>55건 −153,732원</b> vs 시간봉 트레일링
+            <b>12건 +658,160원(승률 100%)</b>. 이제 가드는 <b>하드 스탑로스만</b> 봅니다(급락·갭 방어는 유지).
+          </li>
+          <li>
+            <b>② 최대 보유일수 14일 → 30일</b> — 시간 만료 청산의 95%가 이익 포지션이었습니다. 즉 트레일링이 더 키워줄 승자를
+            달력으로 잘라내고 있었다는 뜻. 전·후반 두 기간 모두 개선.
+          </li>
+          <li>
+            <b>③ 추세이탈 청산은 평가손실 종목만</b> — 이익 중인 종목은 트레일링이 이미 지키니, EMA 이탈만으로 팔면 승자를 먼저 잃습니다.
+          </li>
+        </ul>
+        <div style={{ marginTop: 6 }}>
+          검증: 백테스트에 <b>봉 내부(저가) 스탑 시뮬레이션을 추가</b>해 라이브와 같은 청산 경로를 재현한 뒤 비교(2024-06~2026-08, 72종목).
+          <table style={{ marginTop: 6 }}>
+            <thead><tr><th>설정</th><th className="right">수익률</th><th className="right">MDD</th><th className="right">샤프</th></tr></thead>
+            <tbody>
+              <tr><td>기존(분단위 트레일링 ON)</td><td className="right red">−27.8%</td><td className="right">30.3%</td><td className="right red">−1.08</td></tr>
+              <tr><td>가드=하드스탑만</td><td className="right green">+39.9%</td><td className="right">21.6%</td><td className="right">1.06</td></tr>
+              <tr><td><b>+ 보유 30일 + 손실시만 추세이탈(현재)</b></td><td className="right green"><b>+62.7%</b></td><td className="right">21.1%</td><td className="right"><b>1.49</b></td></tr>
+            </tbody>
+          </table>
+          <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+            같이 검증했지만 <b>안 바꾼 것</b>: 하드스탑 7%(5~6%가 전반엔 좋지만 후반엔 나빠 불안정) · 추세 눌림 진입 유지(끄면 −24%p) ·
+            동시보유 8종목 · 종목당 10% · 최소투자 70% · ATR ×3 — 모두 현재값이 최적이었습니다.
           </div>
         </div>
       </Card>
 
       <Card title="안전장치 🛡️">
         <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
-          <li><b>인트라아워 스탑</b>: 1시간 기다리지 않고 매분 가격을 확인해 손절선에 닿으면 즉시 청산</li>
+          <li><b>인트라아워 스탑</b>: 1시간 기다리지 않고 매분 가격을 확인해 <b><Term t="하드 스탑로스">하드 스탑로스</Term></b>에 닿으면 즉시 청산 — 트레일링은 여기서 안 본다(1분 노이즈에 승자가 털려서. 모의투자 실측: 분단위 트레일링 청산 55건 −15만원 vs 시간봉 트레일링 12건 +66만원)</li>
           <li><b><Term t="ATR">ATR</Term> 사이징</b>: 많이 출렁이는 종목은 조금만, 잔잔한 종목은 더 많이 — 한 종목 몰빵 방지</li>
           <li><b>재진입 쿨다운</b>: 방금 판 종목은 잠깐 다시 안 삼 (출렁임에 휘둘리지 않게)</li>
           <li><b><Term t="킬스위치">킬스위치</Term></b>: 하루 손실 한도를 넘으면 그날은 더 안 삼</li>
