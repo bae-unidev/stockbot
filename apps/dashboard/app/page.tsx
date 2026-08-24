@@ -4,6 +4,7 @@ import { loadSymbolNames, nm } from './lib/symbols';
 import { AutoRefresh } from './components/AutoRefresh';
 import { ControlPanel } from './components/ControlPanel';
 import { DaySelector } from './components/DaySelector';
+import { DailyPnlChart, type DailyPnlPoint } from './components/DailyPnlChart';
 import { Term } from './components/Term';
 
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,16 @@ function kstDay(ts: number): string {
 }
 const dayBounds = (day: string) => ({ start: `${day}T00:00:00.000+09:00`, end: `${day}T23:59:59.999+09:00` });
 
+/**
+ * 매도 체결의 실현손익. 매수 이력이 없는 수량(집계 시작 전부터 계좌에 있던 보유분)은 원가 미상이라
+ * 손익에서 제외한다 — 원가 0 으로 잡으면 매도대금 전액이 이익으로 잡혀 실현손익이 크게 왜곡된다.
+ */
+function sellRealized(c: { qty: number; avg: number }, f: FillRow): number {
+  const q = Math.min(f.quantity, c.qty);
+  if (q <= 0) return 0;
+  return (f.price - c.avg) * q - (f.fee + f.tax) * (q / f.quantity);
+}
+
 /** 체결(ts 오름차순)에서 이동평균원가로 일별 실현손익 누적. */
 function realizedByDay(fills: FillRow[]): Map<string, number> {
   const cost = new Map<string, { qty: number; avg: number }>();
@@ -37,7 +48,8 @@ function realizedByDay(fills: FillRow[]): Map<string, number> {
       c.avg = (c.avg * c.qty + f.price * f.quantity + f.fee) / (c.qty + f.quantity || 1);
       c.qty += f.quantity;
     } else {
-      byDay.set(kstDay(new Date(f.ts).getTime()), (byDay.get(kstDay(new Date(f.ts).getTime())) ?? 0) + ((f.price - c.avg) * f.quantity - f.fee - f.tax));
+      const d = kstDay(new Date(f.ts).getTime());
+      byDay.set(d, (byDay.get(d) ?? 0) + sellRealized(c, f));
       c.qty = Math.max(0, c.qty - f.quantity);
     }
     cost.set(f.symbol, c);
@@ -55,7 +67,7 @@ function realizedByOrder(fills: FillRow[]): Map<string, number> {
       c.avg = (c.avg * c.qty + f.price * f.quantity + f.fee) / (c.qty + f.quantity || 1);
       c.qty += f.quantity;
     } else {
-      const pnl = (f.price - c.avg) * f.quantity - f.fee - f.tax;
+      const pnl = sellRealized(c, f);
       if (f.client_order_id) byOrder.set(f.client_order_id, (byOrder.get(f.client_order_id) ?? 0) + pnl);
       c.qty = Math.max(0, c.qty - f.quantity);
     }
@@ -93,7 +105,7 @@ async function loadDays(): Promise<string[]> {
 
 async function load(day: string, isLatest: boolean) {
   const { start, end } = dayBounds(day);
-  const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd, sectors, watch] = await Promise.all([
+  const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd, sectors, watch, dailyEquity] = await Promise.all([
     sql<Position[]>`select symbol, quantity, avg_price from positions order by symbol`,
     sql<OrderRow[]>`select client_order_id, symbol, side, quantity, status, avg_fill_price, reason, updated_at from orders where created_at >= ${start} and created_at <= ${end} order by created_at desc limit 100`,
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts >= ${start} and ts <= ${end} order by ts desc limit 100`,
@@ -110,6 +122,20 @@ async function load(day: string, isLatest: boolean) {
     sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts, client_order_id from fills where ts <= ${end} order by ts asc`,
     sql<SectorRow[]>`select sector, score, rationale from sector_signals where date = ${day} order by score desc`,
     sql<WatchRow[]>`select symbol, rank, score, components from watchlist where date = ${day} order by rank`,
+    // 거래일별 종료 총자산: 계좌 스냅샷 우선, 없는 날은 그날 마지막 틱 기록으로 보완.
+    // 리플레이(가상시계) 틱은 제외 — finished_at 이 started_at 보다 한참 뒤라 실제 계좌 이력이 아니다.
+    sql<{ day: string; equity: number }[]>`
+      select day, equity from (
+        select day, equity, row_number() over (partition by day order by pri, ts desc) as rn from (
+          select (ts at time zone 'Asia/Seoul')::date::text as day, equity, ts, 1 as pri
+            from account_snapshots where ts <= ${end}
+          union all
+          select (started_at at time zone 'Asia/Seoul')::date::text as day, equity, started_at as ts, 2 as pri
+            from tick_runs
+            where equity is not null and started_at <= ${end}
+              and (finished_at is null or finished_at - started_at < interval '1 hour')
+        ) u
+      ) v where rn = 1 order by day`,
   ]);
 
   // 포지션: 최신일=브로커 잔고(진실의 원천), 과거일=체결 누적 재구성(그날 종료 시점).
@@ -129,7 +155,14 @@ async function load(day: string, isLatest: boolean) {
   const names = await loadSymbolNames();
   const realized = realizedByDay(fillsUpToEnd);
   const realizedOrders = realizedByOrder(fillsUpToEnd);
-  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch };
+  // 일별 손익 = 전 거래일 종료 대비 총자산 변화(실현+평가). 첫날은 기준일이 없어 제외.
+  const dailyPnl: DailyPnlPoint[] = dailyEquity.slice(1).map((r, i) => ({
+    day: r.day,
+    equity: r.equity,
+    pnl: r.equity - dailyEquity[i]!.equity,
+    realized: realized.get(r.day) ?? 0,
+  }));
+  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch, dailyPnl };
 }
 
 function fmt(n: number | null | undefined, digits = 0) {
@@ -184,7 +217,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
   const days = await loadDays();
   const selectedDay = searchParams.day && days.includes(searchParams.day) ? searchParams.day : days[0] ?? kstDay(Date.now());
   const isLatest = selectedDay === (days[0] ?? selectedDay);
-  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch } = await load(selectedDay, isLatest);
+  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch, dailyPnl } = await load(selectedDay, isLatest);
 
   // 파생 지표.
   let investedValue = 0;
@@ -353,6 +386,15 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
               </tbody>
             </table>
           )}
+        </section>
+
+        <section className="panel" style={{ gridColumn: '1 / -1' }}>
+          <h2>일별 손익 — 전 거래일 대비 <Term t="총자산">총자산</Term> 변화</h2>
+          <DailyPnlChart series={dailyPnl} selected={selectedDay} />
+          <p className="muted text-[11px] mt-2">
+            막대 = 그날 종료 총자산 − 전 거래일 종료 총자산(실현+평가 합계, 계좌 스냅샷 기준). 툴팁의 &apos;실현&apos;은 체결 이력 기반이라
+            원가를 알 수 없는 보유분(체결 집계 시작 전 보유) 매도는 실현에서 빠지고 평가 쪽에 포함됩니다.
+          </p>
         </section>
 
         <section className="panel">
