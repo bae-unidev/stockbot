@@ -76,7 +76,7 @@ export async function runLiveTick(deps: TickDeps, now: number): Promise<void> {
     }
 
     // 4) 워치리스트 + 국면 + 재진입 쿨다운.
-    const watchlist = await resolveWatchlist(deps, now);
+    const { symbols: watchlist, fallback: watchlistFallback } = await resolveWatchlist(deps, now);
     const indexAbove200dma = await resolveRegime(deps, now);
     const cooldownUntil = await getCooldowns(deps.redis, [...new Set([...watchlist, ...positions.map((p) => p.symbol)])]);
 
@@ -130,7 +130,7 @@ export async function runLiveTick(deps: TickDeps, now: number): Promise<void> {
       ordersCount,
       equity,
       cash: pf.cash,
-      detail: { diagnostics: decision.diagnostics, indexAbove200dma, watchlist, rejected: verdict.rejected },
+      detail: { diagnostics: decision.diagnostics, indexAbove200dma, watchlist, watchlistFallback, rejected: verdict.rejected },
     });
     logger.info({ tickId, intentsCount, ordersCount, equity }, 'tick complete');
   } catch (err) {
@@ -143,8 +143,11 @@ export async function runLiveTick(deps: TickDeps, now: number): Promise<void> {
   }
 }
 
-/** 오늘 워치리스트(DB) → 없으면 기본 유니버스 + 보유 종목. */
-async function resolveWatchlist(deps: TickDeps, now: number): Promise<Symbol[]> {
+/**
+ * 오늘 워치리스트(DB) → 없으면 기본 유니버스 + 보유 종목.
+ * 폴백은 '랭킹 없는 전체 유니버스'로 진입한다는 뜻이라 조용히 넘어가면 안 된다(레이어1 무력화).
+ */
+async function resolveWatchlist(deps: TickDeps, now: number): Promise<{ symbols: Symbol[]; fallback: boolean }> {
   const date = tradingDateKey(now);
   const rows = await deps.db
     .select({ symbol: s.watchlist.symbol })
@@ -153,10 +156,14 @@ async function resolveWatchlist(deps: TickDeps, now: number): Promise<Symbol[]> 
     .orderBy(s.watchlist.rank);
   const fromDb = rows.map((r) => r.symbol);
   const held = (await deps.repos.positions.all()).map((p) => p.symbol);
-  const base = fromDb.length ? fromDb : deps.defaultUniverse;
+  const fallback = fromDb.length === 0;
+  if (fallback) {
+    deps.logger.warn({ date, universe: deps.defaultUniverse.length }, '워치리스트 없음 — 랭킹 없는 기본 유니버스로 폴백(개장 전 산출 실패/누락)');
+  }
+  const base = fallback ? deps.defaultUniverse : fromDb;
   const blacklist = deps.config.blacklist;
   // 진입 후보에서 블랙리스트 제외(보유 중인 블랙리스트 종목은 청산은 정상 처리됨).
-  return [...new Set([...base, ...held])].filter((s) => !blacklist.includes(s));
+  return { symbols: [...new Set([...base, ...held])].filter((s) => !blacklist.includes(s)), fallback };
 }
 
 /** 지수 일봉이 200일선 위인지. 데이터 부족/미설정이면 보수적으로 true(진입 차단 안 함)하되 로깅. */

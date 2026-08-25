@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 interface Position { symbol: string; quantity: number; avg_price: number }
 interface OrderRow { client_order_id: string; symbol: string; side: string; quantity: number; status: string; avg_fill_price: number | null; reason: string | null; updated_at: string }
 interface FillRow { symbol: string; side: string; quantity: number; price: number; fee: number; tax: number; ts: string; client_order_id?: string }
-interface TickDetail { diagnostics?: Record<string, string>; indexAbove200dma?: boolean; watchlist?: string[]; rejected?: { symbol: string; reason: string }[] }
+interface TickDetail { diagnostics?: Record<string, string>; indexAbove200dma?: boolean; watchlist?: string[]; watchlistFallback?: boolean; rejected?: { symbol: string; reason: string }[] }
 interface TickRow { id: number; started_at: string; status: string; intents_count: number; orders_count: number; error: string | null; detail: TickDetail | null }
 interface RiskRow { date: string; daily_loss_pct: number; kill_switch: boolean; start_equity: number | null }
 interface ScoreRow { symbol: string; sentiment: number; event_type: string | null; confidence: number; published_at: string }
@@ -368,7 +368,10 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
                       <td>
                         {t.error ? <span className="red">{t.error}</span> : diags.length ? (
                           <details>
-                            <summary className="cursor-pointer text-muted text-[12px] select-none">진단 {diags.length}종목{d.watchlist?.length ? ` · 워치 ${d.watchlist.length}` : ''}</summary>
+                            <summary className="cursor-pointer text-muted text-[12px] select-none">
+                              진단 {diags.length}종목{d.watchlist?.length ? ` · 워치 ${d.watchlist.length}` : ''}
+                              {d.watchlistFallback && <span className="red"> · ⚠ 워치리스트 폴백(랭킹 없는 전체 유니버스)</span>}
+                            </summary>
                             <div className="flex flex-wrap gap-1 mt-2">
                               {diags.map(([sym, decision]) => (
                                 <span key={sym} className="inline-flex items-center gap-1 text-[12px] px-[6px] py-[2px] rounded border border-panel-border">
