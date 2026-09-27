@@ -32,3 +32,14 @@ export class KisRejectedError extends KisError {
     this.name = 'KisRejectedError';
   }
 }
+
+/**
+ * 주문 전송 후 응답을 못 받음(타임아웃/연결 끊김) — 브로커 접수 여부 불명.
+ * 재시도하면 중복 주문이 된다(2026-08-13 SK텔레콤 3중 매수 실제 발생) → 재시도 금지, 대사로 확정.
+ */
+export class KisAmbiguousError extends KisError {
+  constructor(message: string, code?: string) {
+    super(message, code);
+    this.name = 'KisAmbiguousError';
+  }
+}

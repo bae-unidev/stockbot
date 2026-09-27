@@ -10,7 +10,7 @@ import type { Fill, Order, OrderGateway, Portfolio, Position, Symbol } from '@st
 export interface SimCosts {
   /** 매수/매도 수수료율(예: 0.00015 = 0.015%). */
   commissionRate: number;
-  /** 매도 거래세율(예: 0.0018). 매수에는 미적용. */
+  /** 매도 거래세율(예: 0.002). 매수에는 미적용. */
   sellTaxRate: number;
   /** 슬리피지(예: 0.0005). 매수는 불리하게 +, 매도는 -. */
   slippageRate: number;
@@ -18,7 +18,8 @@ export interface SimCosts {
 
 export const DEFAULT_SIM_COSTS: SimCosts = {
   commissionRate: 0.00015,
-  sellTaxRate: 0.0018,
+  // 2026 코스피 증권거래세 0.05% + 농특세 0.15%. 모의계좌 3개월 원장으로 검증(0.18% 가정 시 현금 +15k 괴리).
+  sellTaxRate: 0.002,
   slippageRate: 0.0005,
 };
 

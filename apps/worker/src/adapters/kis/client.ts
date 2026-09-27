@@ -5,7 +5,7 @@
 import Bottleneck from 'bottleneck';
 import { fetchWithTimeout } from './fetch.js';
 import { KIS_DOMAIN } from './constants.js';
-import { KisAuthError, KisError, KisRateLimitError } from './errors.js';
+import { KisAmbiguousError, KisAuthError, KisError, KisRateLimitError } from './errors.js';
 import type { KisTokenManager } from './token.js';
 import type { KisCredentials } from '../../config/index.js';
 import type { Logger } from '../../logger.js';
@@ -80,20 +80,33 @@ export class KisClient {
     let body: string | undefined;
     if (req.body) {
       body = JSON.stringify(req.body);
-      if (req.hashBody) headers.hashkey = await this.hashkey(req.body);
+      if (req.hashBody) {
+        // hashkey 는 주문 전송 전 단계 → 여기서의 타임아웃/실패는 주문 미전송이라 재시도 안전.
+        try {
+          headers.hashkey = await this.hashkey(req.body);
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') throw new KisRateLimitError(`KIS hashkey timeout`, 'TIMEOUT');
+          throw err;
+        }
+      }
     }
 
     // 타임아웃 fetch: 멈춘 연결이 Bottleneck(동시 1)을 막아 모든 호출(틱 포함)을 정지시키는 것 방지.
     let res: Response;
+    let text: string;
     try {
       res = await fetchWithTimeout(url, { method: req.method, headers, body });
+      text = await res.text(); // 본문 수신 중 끊겨도 같은 처리(주문이면 접수 여부 불명)
     } catch (err) {
+      // 주문(POST+hashkey)은 비멱등: 전송 후 응답만 못 받았을 수 있다 → 재시도하면 중복 주문. 대사로 확정.
+      if (req.hashBody) {
+        throw new KisAmbiguousError(`KIS ${req.trId} 응답 없음(${err instanceof Error ? err.message : String(err)}) — 접수 여부 불명`);
+      }
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new KisRateLimitError(`KIS ${req.trId} fetch timeout`, 'TIMEOUT'); // 재시도 대상
+        throw new KisRateLimitError(`KIS ${req.trId} fetch timeout`, 'TIMEOUT'); // 조회는 멱등 → 재시도 대상
       }
       throw err;
     }
-    const text = await res.text();
 
     if (res.status === 401 || res.status === 403) throw new KisAuthError(`${res.status}: ${text}`);
 

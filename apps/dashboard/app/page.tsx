@@ -143,26 +143,32 @@ async function load(day: string, isLatest: boolean) {
 
   // 보유 종목 현재가 = 선택일 종료 시점 이하 최신 60m 종가.
   const priceBySymbol: Record<string, number> = {};
+  let priceAsOf: string | null = null; // 평가에 쓴 종가 중 가장 오래된 봉의 KST 일자(선택일보다 오래되면 경고)
   if (positions.length) {
     const syms = positions.map((p) => p.symbol);
-    const rows = await sql<{ symbol: string; close: number }[]>`
-      select distinct on (symbol) symbol, close from bars
+    const rows = await sql<{ symbol: string; close: number; ts: string }[]>`
+      select distinct on (symbol) symbol, close, ts from bars
       where symbol in ${sql(syms)} and timeframe = '60m' and ts <= ${end}
       order by symbol, ts desc`;
-    for (const r of rows) priceBySymbol[r.symbol] = r.close;
+    for (const r of rows) {
+      priceBySymbol[r.symbol] = r.close;
+      const d = kstDay(new Date(r.ts).getTime());
+      if (priceAsOf == null || d < priceAsOf) priceAsOf = d;
+    }
   }
 
   const names = await loadSymbolNames();
   const realized = realizedByDay(fillsUpToEnd);
   const realizedOrders = realizedByOrder(fillsUpToEnd);
   // 일별 손익 = 전 거래일 종료 대비 총자산 변화(실현+평가). 첫날은 기준일이 없어 제외.
-  const dailyPnl: DailyPnlPoint[] = dailyEquity.slice(1).map((r, i) => ({
-    day: r.day,
-    equity: r.equity,
-    pnl: r.equity - dailyEquity[i]!.equity,
-    realized: realized.get(r.day) ?? 0,
-  }));
-  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch, dailyPnl };
+  // 기록 공백(워커 중단 등)이 있으면 한 막대가 여러 날을 합친다 → prevDay 로 명시. 실현도 그 구간 합.
+  const dailyPnl: DailyPnlPoint[] = dailyEquity.slice(1).map((r, i) => {
+    const prevDay = dailyEquity[i]!.day;
+    let realizedSpan = 0;
+    for (const [d, v] of realized) if (d > prevDay && d <= r.day) realizedSpan += v;
+    return { day: r.day, prevDay, equity: r.equity, pnl: r.equity - dailyEquity[i]!.equity, realized: realizedSpan };
+  });
+  return { positions, orders, fills, ticks, risk: risk[0], scores, snap: snap[0], cmds, names, priceBySymbol, priceAsOf, realized, realizedOrders, sectors, watch, dailyPnl };
 }
 
 function fmt(n: number | null | undefined, digits = 0) {
@@ -217,7 +223,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
   const days = await loadDays();
   const selectedDay = searchParams.day && days.includes(searchParams.day) ? searchParams.day : days[0] ?? kstDay(Date.now());
   const isLatest = selectedDay === (days[0] ?? selectedDay);
-  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, realized, realizedOrders, sectors, watch, dailyPnl } = await load(selectedDay, isLatest);
+  const { positions, orders, fills, ticks, risk, scores, snap, cmds, names, priceBySymbol, priceAsOf, realized, realizedOrders, sectors, watch, dailyPnl } = await load(selectedDay, isLatest);
 
   // 파생 지표.
   let investedValue = 0;
@@ -237,6 +243,8 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
     equity && equity > 0 ? (cash != null ? (equity - cash) / equity : investedValue / equity) : null;
   const realizedDay = realized.get(selectedDay) ?? 0;
   const recentRealized = [...realized.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 7);
+  const pnlByDay = new Map(dailyPnl.map((p) => [p.day, p]));
+  const staleAsOf = priceAsOf && priceAsOf < selectedDay ? priceAsOf : null;
   const lastTick = ticks[0];
 
   return (
@@ -255,7 +263,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
         <div className="kpi"><span className="label">현금</span><span className="value">{fmt(cash)}원</span></div>
         <div className="kpi"><span className="label"><Term t="투자비중">투자비중</Term></span><span className="value">{investedPct == null ? '–' : `${(investedPct * 100).toFixed(0)}%`}</span></div>
         <div className="kpi"><span className="label"><Term t="실현손익">당일 실현손익</Term></span><span className={`value ${realizedDay > 0 ? 'green' : realizedDay < 0 ? 'red' : ''}`}>{signed(realizedDay)}원</span></div>
-        <div className="kpi"><span className="label">평가손익(미실현)</span><span className={`value ${unrealized > 0 ? 'green' : unrealized < 0 ? 'red' : ''}`}>{positions.length ? `${signed(unrealized)}원` : '–'}</span></div>
+        <div className="kpi"><span className="label">평가손익(미실현){staleAsOf && <span className="red"> · {staleAsOf.slice(5)} 종가</span>}</span><span className={`value ${unrealized > 0 ? 'green' : unrealized < 0 ? 'red' : ''}`}>{positions.length ? `${signed(unrealized)}원` : '–'}</span></div>
         <div className="kpi"><span className="label">보유 종목</span><span className="value">{positions.length}</span></div>
       </div>
 
@@ -328,7 +336,7 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
             <div className="empty">보유 포지션 없음</div>
           ) : (
             <table>
-              <thead><tr><th>종목</th><th className="right">수량</th><th className="right"><Term t="평단">평단</Term></th><th className="right">종가</th><th className="right"><Term t="실현손익">평가손익</Term></th><th className="right"><Term t="수익률">수익률</Term></th></tr></thead>
+              <thead><tr><th>종목</th><th className="right">수량</th><th className="right"><Term t="평단">평단</Term></th><th className="right">종가{staleAsOf && <span className="red text-[11px]"> ({staleAsOf} 기준)</span>}</th><th className="right"><Term t="실현손익">평가손익</Term></th><th className="right"><Term t="수익률">수익률</Term></th></tr></thead>
               <tbody>
                 {positions.map((p) => {
                   const cur = priceBySymbol[p.symbol];
@@ -395,29 +403,38 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
         </section>
 
         <section className="panel" style={{ gridColumn: '1 / -1' }}>
-          <h2>일별 손익 — 전 거래일 대비 <Term t="총자산">총자산</Term> 변화</h2>
+          <h2>일별 총손익(실현+평가) — 전 기록일 대비 <Term t="총자산">총자산</Term> 변화</h2>
           <DailyPnlChart series={dailyPnl} selected={selectedDay} />
           <p className="muted text-[11px] mt-2">
-            막대 = 그날 종료 총자산 − 전 거래일 종료 총자산(실현+평가 합계, 계좌 스냅샷 기준). 툴팁의 &apos;실현&apos;은 체결 이력 기반이라
-            원가를 알 수 없는 보유분(체결 집계 시작 전 보유) 매도는 실현에서 빠지고 평가 쪽에 포함됩니다.
+            막대 = 그날 종료 총자산 − 직전 기록일 종료 총자산(브로커 계좌 스냅샷). 총손익 = 실현(그날 매도로 확정된 손익) + 평가 변동(보유 종목 시세 변화).
+            그래서 아래 &apos;일별 실현손익&apos;과 숫자가 다른 게 정상이고, 둘의 차이가 평가 변동입니다. 기록이 빈 날(워커 중단)이 있으면 한 막대가 그 구간을 합칩니다.
           </p>
         </section>
 
         <section className="panel">
-          <h2>일별 실현손익 (최근 7)</h2>
+          <h2>일별 실현손익 (매도가 있던 최근 7일)</h2>
           {recentRealized.length === 0 ? <div className="empty">실현 손익 없음</div> : (
             <table>
-              <thead><tr><th>거래일</th><th className="right">실현손익</th></tr></thead>
+              <thead><tr><th>거래일</th><th className="right">실현</th><th className="right">평가 변동</th><th className="right">총손익</th></tr></thead>
               <tbody>
-                {recentRealized.map(([d, pnl]) => (
-                  <tr key={d} className={d === selectedDay ? 'bg-panel-border/30' : ''}>
-                    <td className={d === selectedDay ? '' : 'muted'}>{d === selectedDay ? `▶ ${d}` : d}</td>
-                    <td className={`right ${pnl > 0 ? 'green' : pnl < 0 ? 'red' : ''}`}>{signed(pnl)}원</td>
-                  </tr>
-                ))}
+                {recentRealized.map(([d, pnl]) => {
+                  const tot = pnlByDay.get(d);
+                  // 총손익은 연속 기록일일 때만 그날 값으로 분해 가능(공백 구간이면 합산 막대라 비교 불가).
+                  const exact = tot && (Date.parse(d) - Date.parse(tot.prevDay)) / 86_400_000 <= 4; // 주말·연휴 정도까지만 연속 기록으로 인정
+                  const cls = (v: number) => (v > 0 ? 'green' : v < 0 ? 'red' : '');
+                  return (
+                    <tr key={d} className={d === selectedDay ? 'bg-panel-border/30' : ''}>
+                      <td className={d === selectedDay ? '' : 'muted'}>{d === selectedDay ? `▶ ${d}` : d}</td>
+                      <td className={`right ${cls(pnl)}`}>{signed(pnl)}</td>
+                      <td className={`right ${exact ? cls(tot.pnl - pnl) : 'muted'}`}>{exact ? signed(tot.pnl - pnl) : '–'}</td>
+                      <td className={`right ${exact ? cls(tot.pnl) : 'muted'}`}>{exact ? signed(tot.pnl) : '–'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
+          <p className="muted text-[11px] mt-2">실현 = 매도 체결가 − 이동평균 매입원가 − 수수료·세금(추정). 총손익 = 위 차트 막대와 같은 값.</p>
         </section>
 
         <section className="panel">

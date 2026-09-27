@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { OrderManager, clientOrderId, type OrderStore, type PositionStore } from './index.js';
-import { KisRejectedError } from '../adapters/kis/errors.js';
+import { KisAmbiguousError, KisRejectedError } from '../adapters/kis/errors.js';
 import type { Order, OrderGateway, OrderIntent, Position } from '@stockbot/core';
 
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never;
@@ -17,6 +17,9 @@ function memStore(): OrderStore & { map: Map<string, Order> } {
     },
     async openOrders() {
       return [...map.values()].filter((o) => !['filled', 'rejected', 'canceled'].includes(o.status));
+    },
+    async brokerOrderRefs(sinceMs) {
+      return [...map.values()].filter((o) => o.brokerOrderId && o.createdAt >= sinceMs).map((o) => ({ brokerOrderId: o.brokerOrderId!, createdAt: o.createdAt }));
     },
   };
 }
@@ -74,13 +77,14 @@ describe('OrderManager idempotency & state machine', () => {
   it('reconcileOrders advances the state machine and records fills idempotently', async () => {
     const store = memStore();
     // 제출된 주문 1건(미종결).
-    store.map.set('t1-0-005930-buy', { clientOrderId: 't1-0-005930-buy', brokerOrderId: 'B1', symbol: '005930', side: 'buy', type: 'market', quantity: 10, status: 'accepted', filledQuantity: 0, createdAt: 1, updatedAt: 1 });
+    const t1 = Date.parse('2026-01-01T01:00:00Z'); // 2026-01-01 10:00 KST
+    store.map.set('t1-0-005930-buy', { clientOrderId: 't1-0-005930-buy', brokerOrderId: 'B1', symbol: '005930', side: 'buy', type: 'market', quantity: 10, status: 'accepted', filledQuantity: 0, createdAt: t1, updatedAt: t1 });
     const recorded: { brokerFillId?: string; quantity: number }[] = [];
     const fills = { async recordIfNew(f: { brokerFillId?: string; quantity: number }) { if (!recorded.find((x) => x.brokerFillId === f.brokerFillId)) recorded.push({ brokerFillId: f.brokerFillId, quantity: f.quantity }); } };
     let totalFilled = 4; // 1차: 부분체결 4
-    const fillSource = { async inquireDailyFills() { return [{ brokerOrderId: 'B1', symbol: '005930', side: 'buy' as const, totalFilledQty: totalFilled, avgFillPrice: 70000, canceled: false }]; } };
+    const fillSource = { async inquireDailyFills(from: string) { return from === '20260101' ? [{ brokerOrderId: 'B1', symbol: '005930', side: 'buy' as const, totalFilledQty: totalFilled, avgFillPrice: 70000, canceled: false }] : []; } };
     const gateway: OrderGateway = { async submit(o) { return o; }, async getOrder() { return null; }, async cancel() { throw new Error('no'); } };
-    const om = new OrderManager(gateway, store, posStore, broker, logger, { now: () => 2 }, fills, fillSource);
+    const om = new OrderManager(gateway, store, posStore, broker, logger, { now: () => t1 + 60_000 }, fills, fillSource);
 
     await om.reconcileOrders('20260101');
     expect(store.map.get('t1-0-005930-buy')!.status).toBe('partially_filled');
@@ -134,6 +138,65 @@ describe('OrderManager idempotency & state machine', () => {
     store.map.get('t326-0-033780-sell')!.filledQuantity = 0;
     await om.reconcileOrders('20260907', { lookbackDays: 1 });
     expect(queried).toEqual(['20260907']);
+  });
+
+  it('ambiguous submit (no response) stays submitted, is not resent, and resolves from the broker ledger', async () => {
+    const store = memStore();
+    const t0 = Date.parse('2026-08-13T06:01:15Z'); // 15:01 KST
+    let now = t0;
+    let submits = 0;
+    const gateway: OrderGateway = {
+      async submit() { submits++; throw new KisAmbiguousError('응답 없음'); },
+      async getOrder() { return null; },
+      async cancel() { throw new Error('no'); },
+    };
+    const recorded: { clientOrderId: string; quantity: number }[] = [];
+    const fills = { async recordIfNew(f: { clientOrderId: string; quantity: number; brokerFillId?: string }) { recorded.push({ clientOrderId: f.clientOrderId, quantity: f.quantity }); } };
+    // 브로커 원장: 우리 주문(응답 못 받음) 1건 + 봇이 모르는 중복 체결 1건.
+    const ledger = [
+      { brokerOrderId: '0000038467', symbol: '017670', side: 'buy' as const, totalFilledQty: 10, avgFillPrice: 91900, canceled: false, ts: t0 },
+      { brokerOrderId: '0000038492', symbol: '017670', side: 'buy' as const, totalFilledQty: 10, avgFillPrice: 91900, canceled: false, ts: t0 },
+    ];
+    const fillSource = { async inquireDailyFills(from: string) { return from === '20260813' ? ledger : []; } };
+    const om = new OrderManager(gateway, store, posStore, broker, logger, { now: () => now }, fills, fillSource);
+    const intent: OrderIntent = { symbol: '017670', side: 'buy', type: 'market', quantity: 10, reason: 'core' };
+
+    const r = await om.place([intent], 215);
+    const coid = clientOrderId(215, 0, intent);
+    expect(r.rejected).toHaveLength(0);
+    expect(store.map.get(coid)!.status).toBe('submitted');
+    await om.place([intent], 215); // 같은 틱 재시도 — 재전송 금지
+    expect(submits).toBe(1);
+
+    // 제출 직후(경합 창)엔 귀속/흡수하지 않는다.
+    await om.reconcileOrders('20260813');
+    expect(recorded).toHaveLength(0);
+
+    now = t0 + 5 * 60_000;
+    await om.reconcileOrders('20260813');
+    expect(store.map.get(coid)!.status).toBe('filled');
+    expect(store.map.get(coid)!.brokerOrderId).toBe('0000038467');
+    // 주인 없는 중복 체결은 kis-* 주문으로 흡수 → fills 가 브로커와 일치(10+10).
+    expect(store.map.get('kis-20260813-0000038492')!.status).toBe('filled');
+    expect(recorded.map((x) => x.quantity)).toEqual([10, 10]);
+
+    // 재실행 멱등.
+    await om.reconcileOrders('20260813');
+    expect(recorded).toHaveLength(2);
+  });
+
+  it('ambiguous order with no broker record is marked rejected once its day has passed', async () => {
+    const store = memStore();
+    const t0 = Date.parse('2026-08-11T06:23:00Z');
+    store.map.set('tstop1-0-086790-sell', { clientOrderId: 'tstop1-0-086790-sell', symbol: '086790', side: 'sell', type: 'market', quantity: 7, status: 'submitted', filledQuantity: 0, createdAt: t0, updatedAt: t0 });
+    const fillSource = { async inquireDailyFills() { return []; } };
+    const gateway: OrderGateway = { async submit(o) { return o; }, async getOrder() { return null; }, async cancel() { throw new Error('no'); } };
+    const om = new OrderManager(gateway, store, posStore, broker, logger, { now: () => t0 + 10 * 60_000 }, undefined, fillSource);
+    await om.reconcileOrders('20260811');
+    expect(store.map.get('tstop1-0-086790-sell')!.status).toBe('submitted'); // 당일엔 아직 판정 보류
+    const om2 = new OrderManager(gateway, store, posStore, broker, logger, { now: () => t0 + 86_400_000 }, undefined, fillSource);
+    await om2.reconcileOrders('20260812');
+    expect(store.map.get('tstop1-0-086790-sell')!.status).toBe('rejected');
   });
 
   it('reconcile pulls positions from the broker as source of truth', async () => {

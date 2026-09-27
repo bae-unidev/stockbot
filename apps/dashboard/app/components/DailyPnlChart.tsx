@@ -4,9 +4,10 @@ import { useRouter } from 'next/navigation';
 
 export interface DailyPnlPoint {
   day: string;      // KST 거래일 YYYY-MM-DD
+  prevDay: string;  // 비교 기준(직전 기록일). 공백이 있으면 여러 날을 합친 막대
   equity: number;   // 그날 종료 시점 총자산
   pnl: number;      // 전 거래일 대비 총손익(실현+평가)
-  realized: number; // 그중 실현손익(체결 기준)
+  realized: number; // 그중 실현손익(체결 기준, prevDay 초과 ~ day 구간 합)
 }
 
 const GREEN = '#34d399';
@@ -136,12 +137,12 @@ export function DailyPnlChart({ series, selected }: { series: DailyPnlPoint[]; s
               boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
             }}
           >
-            <div className="muted" style={{ marginBottom: 4 }}>{hb.day}</div>
+            <div className="muted" style={{ marginBottom: 4 }}>{hb.day} <span style={{ fontSize: 11 }}>(vs {hb.prevDay})</span></div>
             {[
               ['총자산', `${won(hb.equity)}원`, ''],
-              ['일별손익', `${signed(hb.pnl)}원 (${hb.equity - hb.pnl > 0 ? `${hb.pnl >= 0 ? '+' : ''}${((hb.pnl / (hb.equity - hb.pnl)) * 100).toFixed(2)}%` : '–'})`, hb.pnl >= 0 ? 'green' : 'red'],
+              ['총손익', `${signed(hb.pnl)}원 (${hb.equity - hb.pnl > 0 ? `${hb.pnl >= 0 ? '+' : ''}${((hb.pnl / (hb.equity - hb.pnl)) * 100).toFixed(2)}%` : '–'})`, hb.pnl >= 0 ? 'green' : 'red'],
               ['· 실현', `${signed(hb.realized)}원`, hb.realized > 0 ? 'green' : hb.realized < 0 ? 'red' : 'muted'],
-              ['· 평가', `${signed(hb.pnl - hb.realized)}원`, hb.pnl - hb.realized > 0 ? 'green' : hb.pnl - hb.realized < 0 ? 'red' : 'muted'],
+              ['· 평가 변동', `${signed(hb.pnl - hb.realized)}원`, hb.pnl - hb.realized > 0 ? 'green' : hb.pnl - hb.realized < 0 ? 'red' : 'muted'],
               ['누적손익', `${signed(hb.cum)}원`, hb.cum >= 0 ? 'green' : 'red'],
             ].map(([k, v, cls]) => (
               <div key={k} className="flex" style={{ justifyContent: 'space-between', gap: 10 }}>

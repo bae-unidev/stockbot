@@ -1,6 +1,6 @@
 /**
  * 주문/체결 대사 백필: `pnpm reconcile [--days N]` (기본 90일).
- * 미종결(accepted 등) 주문을 주문일자별 KIS 일별체결로 다시 조회해 상태를 전진시키고 빠진 fills 를 적재한다.
+ * 기간 내 모든 평일의 KIS 일별체결을 조회해 미종결 주문을 확정하고, 빠진 fills(봇 주문기록 없는 체결 포함)를 적재한다.
  * 워커 틱은 최근 30일만 보므로, 그보다 오래 멈춰 있던 주문을 한 번에 정리할 때 쓴다(읽기 조회 + 로컬 DB 기록만, 주문 안 냄).
  */
 import '../bootstrap.js';
@@ -18,7 +18,7 @@ async function main() {
     process.exit(1);
   }
   const before = (await c.repos.orders.openOrders()).length;
-  await c.orderManager.reconcileOrders(tradingDateKey(Date.now()).replace(/-/g, ''), { lookbackDays });
+  await c.orderManager.reconcileOrders(tradingDateKey(Date.now()).replace(/-/g, ''), { lookbackDays, scanAllDays: true });
   const after = (await c.repos.orders.openOrders()).length;
   logger.info({ lookbackDays, openBefore: before, openAfter: after }, '주문 대사 백필 완료');
   await c.shutdown();

@@ -1,5 +1,5 @@
 /** Postgres repository — 도메인 타입 ↔ 테이블 매핑을 한 곳에 가둔다(State Store, 5장). */
-import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import type { Bar, EventScore, Fill, Order, Position, Symbol, Timeframe } from '@stockbot/core';
 import type { DB } from './client.js';
 import * as s from './schema.js';
@@ -140,6 +140,14 @@ export class OrderRepo {
   async get(clientOrderId: string): Promise<Order | null> {
     const rows = await this.db.select().from(s.orders).where(eq(s.orders.clientOrderId, clientOrderId)).limit(1);
     return rows[0] ? mapOrder(rows[0]) : null;
+  }
+
+  async brokerOrderRefs(sinceMs: number): Promise<{ brokerOrderId: string; createdAt: number }[]> {
+    const rows = await this.db
+      .select({ brokerOrderId: s.orders.brokerOrderId, createdAt: s.orders.createdAt })
+      .from(s.orders)
+      .where(and(isNotNull(s.orders.brokerOrderId), gte(s.orders.createdAt, new Date(sinceMs))));
+    return rows.map((r) => ({ brokerOrderId: r.brokerOrderId!, createdAt: r.createdAt.getTime() }));
   }
 
   /** 미종결(완전체결/거부/취소 이외) 주문 — 크래시 복구 시 대사 대상. */
