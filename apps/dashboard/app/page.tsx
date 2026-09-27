@@ -108,7 +108,8 @@ async function load(day: string, isLatest: boolean) {
   const [brokerPositions, orders, fills, ticks, risk, scores, snap, cmds, fillsUpToEnd, sectors, watch, dailyEquity] = await Promise.all([
     sql<Position[]>`select symbol, quantity, avg_price from positions order by symbol`,
     sql<OrderRow[]>`select client_order_id, symbol, side, quantity, status, avg_fill_price, reason, updated_at from orders where created_at >= ${start} and created_at <= ${end} order by created_at desc limit 100`,
-    sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts from fills where ts >= ${start} and ts <= ${end} order by ts desc limit 100`,
+    sql<FillRow[]>`select f.symbol, f.side, f.quantity, f.price, f.fee, f.tax, f.ts from fills f left join orders o using (client_order_id)
+      where f.ts >= ${start} and f.ts <= ${end} order by f.ts desc, o.created_at desc nulls last, f.id desc limit 100`,
     sql<TickRow[]>`select id, started_at, status, intents_count, orders_count, error, detail from tick_runs where started_at >= ${start} and started_at <= ${end} order by started_at desc limit 50`,
     sql<RiskRow[]>`select date, daily_loss_pct, kill_switch, start_equity from risk_state where date = ${day} limit 1`,
     sql<ScoreRow[]>`select symbol, sentiment, event_type, confidence, published_at from event_scores order by scored_at desc limit 15`,
@@ -119,7 +120,10 @@ async function load(day: string, isLatest: boolean) {
         (select equity, cash, 2 as pri from tick_runs where equity is not null and started_at >= ${start} and started_at <= ${end} order by id desc limit 1)
       ) u order by pri limit 1`,
     sql<CmdRow[]>`select id, kind, status, created_at, executed_at, result from control_commands order by id desc limit 8`,
-    sql<FillRow[]>`select symbol, side, quantity, price, fee, tax, ts, client_order_id from fills where ts <= ${end} order by ts asc`,
+    // 순서가 원가 계산을 좌우한다(같은 날 매수→매도). 체결시각 → 주문시각 → id 로 결정적 정렬.
+    // (과거 체결은 시각이 일자 09:00 으로 뭉개져 있어 동률 시 조회마다 순서가 달라지고 실현손익이 흔들렸다.)
+    sql<FillRow[]>`select f.symbol, f.side, f.quantity, f.price, f.fee, f.tax, f.ts, f.client_order_id from fills f left join orders o using (client_order_id)
+      where f.ts <= ${end} order by f.ts asc, o.created_at asc nulls last, f.id asc`,
     sql<SectorRow[]>`select sector, score, rationale from sector_signals where date = ${day} order by score desc`,
     sql<WatchRow[]>`select symbol, rank, score, components from watchlist where date = ${day} order by rank`,
     // 거래일별 종료 총자산: 계좌 스냅샷 우선, 없는 날은 그날 마지막 틱 기록으로 보완.

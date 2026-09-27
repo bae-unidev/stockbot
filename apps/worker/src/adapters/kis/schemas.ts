@@ -96,6 +96,7 @@ export const DailyCcldResponse = BaseResponse.extend({
         avg_prvs: z.string().optional(), // 평균체결단가
         cncl_yn: z.string().optional(), // 취소여부 Y/N
         ord_dt: z.string().optional(), // 주문일자 YYYYMMDD (체결 귀속일)
+        ord_tmd: z.string().optional(), // 주문시각 HHMMSS — 같은 날 매수·매도 순서(이동평균원가) 결정
       }),
     )
     .optional(),

@@ -24,11 +24,15 @@ export interface BrokerFill {
   ts?: number;
 }
 
-/** YYYYMMDD(KST) → 그 날 09:00 KST 의 epoch ms(체결 날짜 귀속용 근사). */
-function ordDateToEpoch(yyyymmdd?: string): number | undefined {
+/**
+ * 주문일자 YYYYMMDD + 주문시각 HHMMSS(KST) → epoch ms. 시각이 없으면 그날 09:00 KST 근사.
+ * 시각이 중요: 같은 날 같은 종목 매수→매도 순서가 뒤집히면 이동평균원가/실현손익/보유수량이 틀어진다.
+ */
+function ordDateToEpoch(yyyymmdd?: string, hhmmss?: string): number | undefined {
   if (!yyyymmdd || yyyymmdd.length !== 8) return undefined;
   const y = +yyyymmdd.slice(0, 4), mo = +yyyymmdd.slice(4, 6), d = +yyyymmdd.slice(6, 8);
-  return Date.UTC(y, mo - 1, d, 9, 0) - 9 * 3600_000; // KST 09:00
+  const t = hhmmss && /^\d{6}$/.test(hhmmss) ? hhmmss : '090000';
+  return Date.UTC(y, mo - 1, d, +t.slice(0, 2), +t.slice(2, 4), +t.slice(4, 6)) - 9 * 3600_000;
 }
 
 export class KisOrderGateway {
@@ -136,7 +140,7 @@ export class KisOrderGateway {
         totalFilledQty: qty,
         avgFillPrice: avg,
         canceled: o.cncl_yn === 'Y',
-        ts: ordDateToEpoch(o.ord_dt),
+        ts: ordDateToEpoch(o.ord_dt, o.ord_tmd),
       };
     });
   }
