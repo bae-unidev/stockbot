@@ -99,6 +99,9 @@ export const DailyCcldResponse = BaseResponse.extend({
       }),
     )
     .optional(),
+  // 연속조회 키(다음 페이지 요청에 그대로 되돌려 보냄).
+  ctx_area_fk100: z.string().optional(),
+  ctx_area_nk100: z.string().optional(),
 });
 
 export type ChartRowT = z.infer<typeof ChartRow>;

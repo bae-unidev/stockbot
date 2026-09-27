@@ -20,6 +20,7 @@
     "preflight": "pnpm --filter @stockbot/worker preflight",
     "tick": "pnpm --filter @stockbot/worker tick",
     "control": "pnpm --filter @stockbot/worker control",
+    "reconcile": "pnpm --filter @stockbot/worker reconcile",
     "replay": "pnpm --filter @stockbot/worker replay",
     "watchlist": "pnpm --filter @stockbot/worker watchlist",
     "sectors": "pnpm --filter @stockbot/worker sectors",

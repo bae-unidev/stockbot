@@ -18,6 +18,8 @@ export interface KisRequest {
   body?: Record<string, unknown>;
   /** 주문 등 body 변조 방지용 hashkey 필요 여부. */
   hashBody?: boolean;
+  /** 연속조회 헤더(tr_cont). 다음 페이지 요청 시 'N'. */
+  trCont?: string;
 }
 
 export class KisClient {
@@ -40,6 +42,11 @@ export class KisClient {
 
   /** 레이트리밋(EGW00201/429)은 백오프 후 재시도. */
   async request<T>(req: KisRequest): Promise<T> {
+    return (await this.requestPage<T>(req)).data;
+  }
+
+  /** request + 응답 tr_cont 헤더('F'/'M' = 다음 페이지 있음, 'D'/'E' = 마지막). 연속조회용. */
+  async requestPage<T>(req: KisRequest): Promise<{ data: T; trCont: string }> {
     const backoff = [600, 1400, 3000];
     for (let attempt = 0; ; attempt++) {
       try {
@@ -55,7 +62,7 @@ export class KisClient {
     }
   }
 
-  private async doRequest<T>(req: KisRequest): Promise<T> {
+  private async doRequest<T>(req: KisRequest): Promise<{ data: T; trCont: string }> {
     const token = await this.tokens.getToken();
     const url = new URL(this.domain + req.path);
     if (req.query) for (const [k, v] of Object.entries(req.query)) url.searchParams.set(k, v);
@@ -68,6 +75,7 @@ export class KisClient {
       tr_id: req.trId,
       custtype: 'P', // 개인
     };
+    if (req.trCont) headers.tr_cont = req.trCont;
 
     let body: string | undefined;
     if (req.body) {
@@ -108,7 +116,7 @@ export class KisClient {
     if (obj.rt_cd != null && obj.rt_cd !== '0') {
       throw new KisError(`KIS ${req.trId} rt_cd=${obj.rt_cd} ${obj.msg_cd ?? ''} ${obj.msg1 ?? ''}`, obj.msg_cd);
     }
-    return json as T;
+    return { data: json as T, trCont: res.headers.get('tr_cont') ?? '' };
   }
 
   /** 주문 body 의 hashkey 발급. (타임아웃 필수 — 주문 시 여기서 hang 하면 워커 프리즈) */

@@ -90,29 +90,42 @@ export class KisOrderGateway {
    */
   async inquireDailyFills(from: string, to: string): Promise<BrokerFill[]> {
     const { cano, acntPrdtCd } = this.client.accountParts();
-    const res = await this.client.request<unknown>({
-      method: 'GET',
-      path: '/uapi/domestic-stock/v1/trading/inquire-daily-ccld',
-      trId: TR_ID[this.client.env].orderList,
-      query: {
-        CANO: cano,
-        ACNT_PRDT_CD: acntPrdtCd,
-        INQR_STRT_DT: from,
-        INQR_END_DT: to,
-        SLL_BUY_DVSN_CD: '00',
-        INQR_DVSN: '00',
-        PDNO: '',
-        CCLD_DVSN: '00',
-        ORD_GNO_BRNO: '',
-        ODNO: '',
-        INQR_DVSN_3: '00',
-        INQR_DVSN_1: '',
-        CTX_AREA_FK100: '',
-        CTX_AREA_NK100: '',
-      },
-    });
-    const parsed = DailyCcldResponse.parse(res);
-    return (parsed.output1 ?? []).map<BrokerFill>((o) => {
+    // 연속조회: 모의투자는 한 페이지가 작아(하루 주문이 많거나 여러 날 범위면) 잘린다 → tr_cont 로 끝까지.
+    const rows: NonNullable<ReturnType<typeof DailyCcldResponse.parse>['output1']> = [];
+    let fk = '';
+    let nk = '';
+    let trCont = '';
+    for (let page = 0; page < 20; page++) {
+      const res = await this.client.requestPage<unknown>({
+        method: 'GET',
+        path: '/uapi/domestic-stock/v1/trading/inquire-daily-ccld',
+        trId: TR_ID[this.client.env].orderList,
+        trCont,
+        query: {
+          CANO: cano,
+          ACNT_PRDT_CD: acntPrdtCd,
+          INQR_STRT_DT: from,
+          INQR_END_DT: to,
+          SLL_BUY_DVSN_CD: '00',
+          INQR_DVSN: '00',
+          PDNO: '',
+          CCLD_DVSN: '00',
+          ORD_GNO_BRNO: '',
+          ODNO: '',
+          INQR_DVSN_3: '00',
+          INQR_DVSN_1: '',
+          CTX_AREA_FK100: fk,
+          CTX_AREA_NK100: nk,
+        },
+      });
+      const parsed = DailyCcldResponse.parse(res.data);
+      rows.push(...(parsed.output1 ?? []));
+      if (res.trCont !== 'F' && res.trCont !== 'M') break;
+      fk = parsed.ctx_area_fk100 ?? '';
+      nk = parsed.ctx_area_nk100 ?? '';
+      trCont = 'N';
+    }
+    return rows.map<BrokerFill>((o) => {
       const qty = Number(o.tot_ccld_qty ?? 0);
       const amt = Number(o.tot_ccld_amt ?? 0);
       const avg = qty > 0 && amt > 0 ? amt / qty : Number(o.avg_prvs ?? 0);

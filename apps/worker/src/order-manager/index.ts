@@ -9,6 +9,7 @@
 import type { Fill, Order, OrderGateway, OrderIntent, Position, Side } from '@stockbot/core';
 import { KisRejectedError } from '../adapters/kis/errors.js';
 import type { Logger } from '../logger.js';
+import { tradingDateKey } from '../market/calendar.js';
 
 /** 브로커 주문별 누적 체결 요약(대사용). */
 export interface BrokerFill {
@@ -75,27 +76,39 @@ export class OrderManager {
 
   /**
    * 주문 상태 대사(10장-2,3): 브로커 일별 체결로 미종결 주문의 상태머신을 전진시키고,
-   * 신규 체결분을 fills 에 멱등 적재한다. dateYYYYMMDD: 조회 거래일(KST).
+   * 신규 체결분을 fills 에 멱등 적재한다. dateYYYYMMDD: 오늘 거래일(KST).
    * 흐름: submitted/accepted → (부분체결)partially_filled → filled/canceled.
+   *
+   * 조회는 "오늘"만이 아니라 미종결 주문의 **주문일자별**로 한다. 장 막판 틱(15:0x)에 낸 주문은
+   * 그 틱이 끝난 뒤 체결되는데, 다음 날 틱이 다음 날 체결만 보면 영영 accepted 로 남고 fills 가
+   * 비어 대시보드 과거일 포지션/투자비중/실현손익이 틀어진다(2026-09 실제 발생). lookbackDays 보다
+   * 오래된 미종결 주문은 매 틱 조회 비용을 막기 위해 건너뛴다(백필은 `pnpm reconcile --days N`).
    */
-  async reconcileOrders(dateYYYYMMDD: string): Promise<void> {
+  async reconcileOrders(dateYYYYMMDD: string, opts: { lookbackDays?: number } = {}): Promise<void> {
     if (!this.fillSource) return;
-    const open = await this.orders.openOrders();
+    const open = (await this.orders.openOrders()).filter((o) => o.brokerOrderId);
     if (open.length === 0) return;
 
-    let brokerFills: BrokerFill[];
-    try {
-      brokerFills = await this.fillSource.inquireDailyFills(dateYYYYMMDD, dateYYYYMMDD);
-    } catch (err) {
-      this.logger.error({ err }, 'order reconciliation: daily-fills inquiry failed');
-      return;
+    const lookbackMs = (opts.lookbackDays ?? 30) * 86_400_000;
+    const nowMs = this.clock.now();
+    const orderDate = (o: Order) => tradingDateKey(o.createdAt).replace(/-/g, '');
+    const dates = new Set<string>([dateYYYYMMDD]);
+    for (const o of open) if (nowMs - o.createdAt <= lookbackMs) dates.add(orderDate(o));
+
+    // KIS 주문번호(odno)는 매 거래일 새로 매겨진다 → (주문일자, odno) 로만 매칭해야 다른 날 체결과 안 섞인다.
+    const byDate = new Map<string, Map<string, BrokerFill>>();
+    for (const d of [...dates].sort()) {
+      try {
+        const fills = await this.fillSource.inquireDailyFills(d, d);
+        byDate.set(d, new Map(fills.map((f) => [f.brokerOrderId, f])));
+      } catch (err) {
+        this.logger.error({ err, date: d }, 'order reconciliation: daily-fills inquiry failed');
+      }
     }
-    const byOdno = new Map(brokerFills.map((f) => [f.brokerOrderId, f]));
 
     for (const o of open) {
-      if (!o.brokerOrderId) continue;
-      const bf = byOdno.get(o.brokerOrderId);
-      if (!bf) continue;
+      const bf = byDate.get(orderDate(o))?.get(o.brokerOrderId!);
+      if (!bf || bf.symbol !== o.symbol || bf.side !== o.side) continue;
 
       const prevFilled = o.filledQuantity;
       const newFilled = bf.totalFilledQty;
@@ -114,7 +127,7 @@ export class OrderManager {
           fee: Math.round(gross * 0.00015),
           tax: o.side === 'sell' ? Math.round(gross * 0.0018) : 0,
           ts: bf.ts ?? this.clock.now(), // 체결 귀속일(주문일자) 우선 — 실현손익 날짜 정확
-          brokerFillId: `${o.brokerOrderId}:${newFilled}`,
+          brokerFillId: `${orderDate(o)}:${o.brokerOrderId}:${newFilled}`, // odno 는 일자별 재사용 → 일자 포함
         });
       }
 

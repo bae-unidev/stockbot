@@ -231,7 +231,10 @@ export default async function Page({ searchParams }: { searchParams: { day?: str
   }
   const equity = snap?.equity ?? risk?.start_equity ?? null;
   const cash = snap?.cash ?? null;
-  const investedPct = equity && equity > 0 ? investedValue / equity : null;
+  // 투자비중 = (총자산 − 현금) / 총자산. 둘 다 브로커 스냅샷 값이라 진실의 원천.
+  // 과거일 포지션(체결 재구성)으로 계산하면 누락 체결 하나에 100% 를 넘어버린다 → 스냅샷 없을 때만 폴백.
+  const investedPct =
+    equity && equity > 0 ? (cash != null ? (equity - cash) / equity : investedValue / equity) : null;
   const realizedDay = realized.get(selectedDay) ?? 0;
   const recentRealized = [...realized.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 7);
   const lastTick = ticks[0];
